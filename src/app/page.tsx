@@ -358,7 +358,7 @@ export default function Home() {
                             }
                         `}
                     >
-                        {loading ? '検索中...' : '検索して総件数を確認'}
+                        {loading ? '検索中...' : '検索して総サロン数を確認'}
                     </button>
                 </div>
 

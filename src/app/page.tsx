@@ -38,6 +38,8 @@ interface ProgressState {
     chunkNumber?: number;
     totalChunks?: number;
     elapsedMs: number;
+    currentShopName?: string;      // 現在処理中の店舗名
+    processedCount?: number;       // 実際に処理した件数
 }
 
 function formatTime(ms: number): string {
@@ -179,6 +181,9 @@ export default function Home() {
             let currentIndex = 0;
             let chunkNumber = 1;
 
+            // 最初のチャンク処理前に店舗名を設定
+            let currentShopName = shops.length > 0 ? shops[0].name : '';
+
             while (currentIndex < totalShops) {
                 setProgress({
                     phase: 'processing',
@@ -186,7 +191,9 @@ export default function Home() {
                     total: totalShops,
                     chunkNumber,
                     totalChunks,
-                    elapsedMs: Date.now() - startTimeRef.current
+                    elapsedMs: Date.now() - startTimeRef.current,
+                    currentShopName,
+                    processedCount: allResults.length
                 });
 
                 const processRes = await fetch('/api/scrape', {
@@ -207,6 +214,11 @@ export default function Home() {
                 const results: ShopFull[] = processData.results || [];
                 allResults.push(...results);
 
+                // 次のチャンクの最初の店舗名を取得
+                if (processData.currentShopNames && processData.currentShopNames.length > 0) {
+                    currentShopName = processData.currentShopNames[0];
+                }
+
                 if (processData.phase === 'complete' || processData.nextIndex === undefined) {
                     break;
                 }
@@ -222,7 +234,8 @@ export default function Home() {
                 phase: 'complete',
                 current: allResults.length,
                 total: totalShops,
-                elapsedMs: Date.now() - startTimeRef.current
+                elapsedMs: Date.now() - startTimeRef.current,
+                processedCount: allResults.length  // 実際に処理した件数
             });
 
         } catch (error) {
@@ -260,7 +273,6 @@ export default function Home() {
         }, 100);
     }, [csvData, keyword]);
 
-    const csvRowCount = csvData ? csvData.split('\n').length - 1 : 0;
     const progressPercent = progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
 
     return (
@@ -352,7 +364,11 @@ export default function Home() {
                             />
                             <div className="text-xs text-gray-500 space-y-1">
                                 <p>※ 1〜{searchResult.totalPages}ページまで指定可能</p>
-                                <p>※ {maxPages}ページ = 約 {maxPages * searchResult.shopsOnPage} 店舗</p>
+                                <p>※ {maxPages}ページ = {
+                                    maxPages >= searchResult.totalPages
+                                        ? `${searchResult.totalCount.toLocaleString()} 店舗`
+                                        : `約 ${(maxPages * searchResult.shopsOnPage).toLocaleString()} 店舗`
+                                }</p>
                             </div>
                         </div>
 
@@ -369,7 +385,11 @@ export default function Home() {
                         >
                             {scraping
                                 ? 'スクレイピング中...'
-                                : `${maxPages}ページ分をスクレイピング開始（約${maxPages * searchResult.shopsOnPage}店舗）`
+                                : `${maxPages}ページ分をスクレイピング開始（${
+                                    maxPages >= searchResult.totalPages
+                                        ? `${searchResult.totalCount.toLocaleString()}店舗`
+                                        : `約${(maxPages * searchResult.shopsOnPage).toLocaleString()}店舗`
+                                }）`
                             }
                         </button>
 
@@ -382,9 +402,16 @@ export default function Home() {
                                         {progress.chunkNumber && ` (チャンク ${progress.chunkNumber}/${progress.totalChunks})`}
                                     </span>
                                     <span>
-                                        {progress.current} / {progress.total}
+                                        {progress.current} / {progress.total} 件
                                     </span>
                                 </div>
+
+                                {/* 現在処理中の店舗名 */}
+                                {progress.phase === 'processing' && progress.currentShopName && (
+                                    <div className="text-xs text-yellow-700 truncate">
+                                        📍 {progress.currentShopName}
+                                    </div>
+                                )}
 
                                 <div className="w-full bg-yellow-200 rounded-full h-4 overflow-hidden">
                                     <div
@@ -415,7 +442,7 @@ export default function Home() {
                                 データ取得完了
                             </p>
                             <div className="text-blue-700 space-y-1">
-                                <p><strong>{csvRowCount}件</strong>のデータを取得しました</p>
+                                <p><strong>{progress.processedCount ?? progress.current}件</strong>のデータを取得しました</p>
                                 <p className="text-sm">処理時間: {formatTime(progress.elapsedMs)}</p>
                             </div>
                         </div>
@@ -435,7 +462,7 @@ export default function Home() {
 
                 {csvData && (
                     <div className="bg-white p-4 rounded-xl shadow-lg w-full max-w-4xl mt-8">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4">CSVプレビュー ({csvRowCount}件)</h2>
+                        <h2 className="text-xl font-bold text-gray-800 mb-4">CSVプレビュー ({progress.processedCount ?? progress.current}件)</h2>
                         <textarea
                             className="w-full h-96 p-3 border border-gray-300 rounded-lg font-mono text-xs text-black"
                             value={csvData}

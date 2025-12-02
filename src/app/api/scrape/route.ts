@@ -35,6 +35,9 @@ interface ChunkResponse {
   totalShops?: number;          // 総店舗数
   csv?: string;                 // complete時に返す
   elapsedMs: number;
+  // 進捗表示用
+  currentShopNames?: string[];  // 現在処理中のチャンクの店舗名
+  processedCount?: number;      // 処理済み店舗数
 }
 
 // --- Utility: Sleep ---
@@ -349,12 +352,18 @@ export async function POST(req: Request) {
       const nextIdx = idx + CHUNK_SIZE;
       const isComplete = nextIdx >= shopsToProcess.length;
 
+      // 次のチャンクの店舗名を取得（進捗表示用）
+      const nextChunk = isComplete ? [] : shopsToProcess.slice(nextIdx, nextIdx + CHUNK_SIZE);
+      const nextShopNames = nextChunk.map(s => s.name);
+
       const response: ChunkResponse = {
         phase: isComplete ? 'complete' : 'processing',
         results,
         nextIndex: isComplete ? undefined : nextIdx,
         totalShops: shopsToProcess.length,
-        elapsedMs: Date.now() - startTime
+        elapsedMs: Date.now() - startTime,
+        currentShopNames: nextShopNames,
+        processedCount: Math.min(nextIdx, shopsToProcess.length)
       };
 
       return Response.json(response);

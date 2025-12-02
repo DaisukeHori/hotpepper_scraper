@@ -72,6 +72,28 @@ function formatRemainingTime(seconds: number): string {
     return `約${secs}秒`;
 }
 
+// スライダー用のキリの良い数値を生成
+function generateNiceNumbers(total: number): number[] {
+    if (total <= 10) return [1, total];
+
+    // 間隔を決定（総数に応じて調整）
+    let step: number;
+    if (total <= 50) step = 10;
+    else if (total <= 100) step = 20;
+    else if (total <= 300) step = 50;
+    else if (total <= 1000) step = 100;
+    else step = 250;
+
+    const values: number[] = [];
+    for (let i = step; i < total; i += step) {
+        values.push(i);
+    }
+    // 最大値も追加（キリが良くない場合でも）
+    values.push(total);
+
+    return values;
+}
+
 function shopsToCsv(rows: ShopFull[]): string {
     const headers = [
         "店名", "URL",
@@ -394,28 +416,70 @@ export default function Home() {
                                 <span className="bg-green-600 text-white px-2 py-1 rounded mr-2">ステップ2</span>
                                 取得する件数を選択
                             </label>
-                            <div className="flex items-center gap-3">
-                                <input
-                                    id="maxShopsSlider"
-                                    type="range"
-                                    min="1"
-                                    max={searchResult.totalCount}
-                                    className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
-                                    value={maxShops}
-                                    onChange={(e) => setMaxShops(Number(e.target.value))}
-                                />
-                                <input
-                                    id="maxShops"
-                                    type="number"
-                                    min="1"
-                                    max={searchResult.totalCount}
-                                    className="w-24 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition text-black text-center"
-                                    value={maxShops}
-                                    onChange={(e) => setMaxShops(Math.min(Math.max(1, Number(e.target.value)), searchResult.totalCount))}
-                                />
-                            </div>
+                            {(() => {
+                                const niceNumbers = generateNiceNumbers(searchResult.totalCount);
+                                return (
+                                    <>
+                                        <div className="flex items-center gap-3">
+                                            <input
+                                                id="maxShopsSlider"
+                                                type="range"
+                                                min="1"
+                                                max={searchResult.totalCount}
+                                                list="shopTicks"
+                                                className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
+                                                value={maxShops}
+                                                onChange={(e) => setMaxShops(Number(e.target.value))}
+                                            />
+                                            <datalist id="shopTicks">
+                                                {niceNumbers.map(n => (
+                                                    <option key={n} value={n} />
+                                                ))}
+                                            </datalist>
+                                            <input
+                                                id="maxShops"
+                                                type="number"
+                                                min="1"
+                                                max={searchResult.totalCount}
+                                                className="w-24 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition text-black text-center"
+                                                value={maxShops}
+                                                onChange={(e) => setMaxShops(Math.min(Math.max(1, Number(e.target.value)), searchResult.totalCount))}
+                                            />
+                                        </div>
+                                        {/* キリの良い数値ボタン */}
+                                        <div className="flex flex-wrap gap-2">
+                                            {niceNumbers.slice(0, 6).map(n => (
+                                                <button
+                                                    key={n}
+                                                    type="button"
+                                                    onClick={() => setMaxShops(n)}
+                                                    className={`px-3 py-1 text-xs rounded-full border transition ${
+                                                        maxShops === n
+                                                            ? 'bg-green-600 text-white border-green-600'
+                                                            : 'bg-white text-gray-600 border-gray-300 hover:border-green-500'
+                                                    }`}
+                                                >
+                                                    {n.toLocaleString()}件
+                                                </button>
+                                            ))}
+                                            {niceNumbers.length > 6 && niceNumbers[niceNumbers.length - 1] !== niceNumbers[5] && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setMaxShops(searchResult.totalCount)}
+                                                    className={`px-3 py-1 text-xs rounded-full border transition ${
+                                                        maxShops === searchResult.totalCount
+                                                            ? 'bg-green-600 text-white border-green-600'
+                                                            : 'bg-white text-gray-600 border-gray-300 hover:border-green-500'
+                                                    }`}
+                                                >
+                                                    全件({searchResult.totalCount.toLocaleString()})
+                                                </button>
+                                            )}
+                                        </div>
+                                    </>
+                                );
+                            })()}
                             <div className="text-xs text-gray-500 space-y-1">
-                                <p>※ 1〜{searchResult.totalCount.toLocaleString()}件まで指定可能</p>
                                 <p>※ 処理目安: {formatRemainingTime(Math.ceil(maxShops / 250 * 60))}（250件/分）</p>
                             </div>
                         </div>

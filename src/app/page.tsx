@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import Link from 'next/link';
 
 interface SearchResult {
     keyword: string;
@@ -359,7 +360,15 @@ export default function Home() {
     return (
         <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-gray-50">
             <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex flex-col gap-8">
-                <h1 className="text-4xl font-bold text-gray-800 mb-8">HotPepper Beauty Scraper</h1>
+                <div className="text-center mb-8">
+                    <h1 className="text-4xl font-bold text-gray-800">HotPepper Beauty Scraper</h1>
+                    <Link
+                        href="/help"
+                        className="text-blue-600 hover:text-blue-800 text-sm mt-2 inline-block"
+                    >
+                        使い方ガイド →
+                    </Link>
+                </div>
 
                 {/* ステップ1: キーワード検索 */}
                 <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md flex flex-col gap-6">

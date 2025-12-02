@@ -364,7 +364,11 @@ export default function Home() {
                             />
                             <div className="text-xs text-gray-500 space-y-1">
                                 <p>※ 1〜{searchResult.totalPages}ページまで指定可能</p>
-                                <p>※ {maxPages}ページ = 約 {maxPages * searchResult.shopsOnPage} 店舗</p>
+                                <p>※ {maxPages}ページ = {
+                                    maxPages >= searchResult.totalPages
+                                        ? `${searchResult.totalCount.toLocaleString()} 店舗`
+                                        : `約 ${(maxPages * searchResult.shopsOnPage).toLocaleString()} 店舗`
+                                }</p>
                             </div>
                         </div>
 
@@ -381,7 +385,11 @@ export default function Home() {
                         >
                             {scraping
                                 ? 'スクレイピング中...'
-                                : `${maxPages}ページ分をスクレイピング開始（約${maxPages * searchResult.shopsOnPage}店舗）`
+                                : `${maxPages}ページ分をスクレイピング開始（${
+                                    maxPages >= searchResult.totalPages
+                                        ? `${searchResult.totalCount.toLocaleString()}店舗`
+                                        : `約${(maxPages * searchResult.shopsOnPage).toLocaleString()}店舗`
+                                }）`
                             }
                         </button>
 

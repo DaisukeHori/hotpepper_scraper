@@ -1,4 +1,3 @@
-import { NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
 
 // --- Types ---
@@ -82,6 +81,9 @@ function parseMaxPages(html: string): number {
 }
 
 // --- Parse: Shop List ---
+// PowerQuery: RowSelector = ".slnCassetteList > LI"
+//             店名 = ".slnName"
+//             URL = ".slnImgList > :nth-child(1) > A:nth-child(1)" の href属性
 
 function parseShopsFromListPage(html: string): ShopBase[] {
   const $ = cheerio.load(html);
@@ -90,20 +92,34 @@ function parseShopsFromListPage(html: string): ShopBase[] {
 
   const shops: ShopBase[] = [];
   rows.each((i, el) => {
-    const name = $(el).find(".slnName").text().trim();
-    const href = $(el)
+    const $row = $(el);
+
+    // 店名を取得
+    const name = $row.find(".slnName").text().trim();
+
+    // URLを取得（.slnImgList の最初の子要素の最初のaタグ）
+    let href = $row
       .find(".slnImgList")
       .children()
       .first()
       .find("a")
+      .first()
       .attr("href");
+
+    if (!href) {
+      // バックアップ: slnH を含む任意のリンク
+      href = $row.find("a[href*='slnH']").first().attr("href");
+    }
 
     if (!href) return;
 
-    // Make absolute URL
-    const url = href.startsWith("http")
-      ? href
-      : "https://beauty.hotpepper.jp" + href;
+    // クエリパラメータを削除
+    let url = href.split("?")[0];
+
+    // 絶対URL化
+    if (!url.startsWith("http")) {
+      url = "https://beauty.hotpepper.jp" + url;
+    }
 
     shops.push({ name, url, page: 0 });
   });
@@ -112,18 +128,22 @@ function parseShopsFromListPage(html: string): ShopBase[] {
 }
 
 // --- Fetch + Parse: Detail Page ---
+// PowerQuery: RowSelector = "TABLE.slnDataTbl.bdCell.bgThNml.fgThNml.vaThT.pCellV10H12.mT20 > * > TR"
+//             Column1 = TH, Column2 = TD
 
 function parseShopDetail(html: string): ShopDetail {
   const $ = cheerio.load(html);
 
+  // PowerQueryと同じセレクタを使用
   const rows = $("table.slnDataTbl.bdCell.bgThNml.fgThNml.vaThT.pCellV10H12.mT20")
     .find("tr");
 
   const out: ShopDetail = {};
 
   rows.each((i, el) => {
-    const th = $(el).find("th").text().trim();
-    const td = $(el).find("td").text().trim();
+    const $row = $(el);
+    const th = $row.find("th").first().text().trim();
+    const td = $row.find("td").first().text().trim();
 
     switch (th) {
       case "電話番号":
@@ -166,20 +186,55 @@ function parseShopDetail(html: string): ShopDetail {
 }
 
 // --- Fetch + Parse: Tel Page ---
+// 電話番号ページ (/tel/) から実際の電話番号を取得
 
 function parseShopTel(html: string): { telReal?: string } {
   const $ = cheerio.load(html);
-  const rows = $("table.wFull.bdCell.pCell10.mT15").find("tr");
 
-  let tel = undefined;
+  // 複数のパターンを試す
+  let tel: string | undefined = undefined;
 
-  rows.each((i, el) => {
+  // パターン1: table.wFull.bdCell.pCell10.mT15 内のTH/TD
+  $("table.wFull.bdCell.pCell10.mT15").find("tr").each((i, el) => {
     const th = $(el).find("th").text().trim();
     const td = $(el).find("td").text().trim();
-    if (th === "電話番号") {
+    if (th === "電話番号" && td) {
       tel = td;
     }
   });
+
+  // パターン2: 電話番号を含むテーブル行を探す
+  if (!tel) {
+    $("th").each((i, el) => {
+      const thText = $(el).text().trim();
+      if (thText === "電話番号") {
+        const tdText = $(el).next("td").text().trim();
+        if (tdText) {
+          tel = tdText;
+        }
+      }
+    });
+  }
+
+  // パターン3: tel:リンクを探す
+  if (!tel) {
+    const telLink = $("a[href^='tel:']").first();
+    if (telLink.length) {
+      tel = telLink.attr("href")?.replace("tel:", "").trim();
+    }
+  }
+
+  // パターン4: 電話番号形式のテキストを探す（03-XXXX-XXXX, 0120-XXX-XXX など）
+  if (!tel) {
+    const phonePattern = /0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}/;
+    $("*").each((i, el) => {
+      const text = $(el).clone().children().remove().end().text().trim();
+      const match = text.match(phonePattern);
+      if (match && !tel) {
+        tel = match[0];
+      }
+    });
+  }
 
   return { telReal: tel };
 }
@@ -187,9 +242,10 @@ function parseShopTel(html: string): { telReal?: string } {
 // --- Aggregation: Fetch Shop Full ---
 
 async function fetchShopFull(shop: ShopBase): Promise<ShopFull> {
+  // 詳細ページと電話番号ページを並列で取得
   const [detailHtml, telHtml] = await Promise.all([
-    fetch(shop.url).then(r => r.text()),
-    fetch(shop.url + "/tel/").then(r => r.text()).catch(() => "")
+    fetch(shop.url).then(r => r.text()).catch(() => ""),
+    fetch(shop.url.replace(/\/$/, "") + "/tel/").then(r => r.text()).catch(() => "")
   ]);
 
   const detail = parseShopDetail(detailHtml);
@@ -207,13 +263,13 @@ async function fetchShopFull(shop: ShopBase): Promise<ShopFull> {
 function shopsToCsv(rows: ShopFull[]): string {
   const headers = [
     "店名", "URL", "ページ",
-    "telMask", "address", "access",
-    "businessHours", "holiday", "payment",
-    "cutPrice", "staffCount", "features",
-    "remark", "others", "telReal"
+    "電話番号", "住所", "アクセス・道案内",
+    "営業時間", "定休日", "支払い方法",
+    "カット価格", "スタッフ数", "こだわり条件",
+    "備考", "その他", "電話番号(実際)"
   ];
 
-  const escape = (v: any) => {
+  const escape = (v: unknown) => {
     if (v == null) return "";
     const s = String(v).replace(/"/g, '""');
     return `"${s}"`;

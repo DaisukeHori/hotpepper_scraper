@@ -2,15 +2,25 @@
 
 import { useState } from 'react';
 
+interface SearchResult {
+    keyword: string;
+    totalPages: number;
+    totalCount: number;
+    shopsOnPage: number;
+    shopsPerPage: number;
+    estimatedTotal: number;
+    shopsPreview: { name: string; url: string }[];
+}
+
 export default function Home() {
     const [keyword, setKeyword] = useState('');
     const [loading, setLoading] = useState(false);
-    const [searchResult, setSearchResult] = useState<{ totalPages: number } | null>(null);
+    const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
     const [maxPages, setMaxPages] = useState(5);
     const [csvPreview, setCsvPreview] = useState('');
     const [scraping, setScraping] = useState(false);
 
-    // ステップ1: キーワード検索して総ページ数を取得
+    // ステップ1: キーワード検索して総ページ数と店舗数を取得
     async function handleSearch() {
         if (!keyword) {
             alert('キーワードを入力してください');
@@ -30,7 +40,7 @@ export default function Home() {
                 return;
             }
 
-            const data = await res.json();
+            const data: SearchResult = await res.json();
             setSearchResult(data);
             setMaxPages(Math.min(data.totalPages, 5)); // デフォルトは5ページ
         } catch (error) {
@@ -113,7 +123,7 @@ export default function Home() {
                             id="keyword"
                             type="text"
                             className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-black"
-                            placeholder="例: 渋谷"
+                            placeholder="例: 渋谷、香草カラー"
                             value={keyword}
                             onChange={(e) => setKeyword(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
@@ -138,16 +148,41 @@ export default function Home() {
                 {/* ステップ2: ページ数選択とスクレイピング実行 */}
                 {searchResult && (
                     <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md flex flex-col gap-6">
+                        {/* 検索結果の詳細表示 */}
                         <div className="bg-green-50 border border-green-300 rounded-lg p-4">
-                            <p className="text-green-800 font-semibold">
-                                ✅ 検索結果: 全 <span className="text-2xl">{searchResult.totalPages}</span> ページ
+                            <p className="text-green-800 font-semibold mb-2">
+                                検索結果: 「{searchResult.keyword}」
                             </p>
+                            <div className="grid grid-cols-2 gap-2 text-sm text-green-700">
+                                <div>総ページ数:</div>
+                                <div className="font-bold text-xl">{searchResult.totalPages} ページ</div>
+                                <div>1ページあたり:</div>
+                                <div className="font-bold">{searchResult.shopsOnPage} 店舗</div>
+                                <div>推定総店舗数:</div>
+                                <div className="font-bold">{searchResult.estimatedTotal} 店舗</div>
+                            </div>
                         </div>
+
+                        {/* 店舗プレビュー */}
+                        {searchResult.shopsPreview && searchResult.shopsPreview.length > 0 && (
+                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                <p className="text-gray-700 font-semibold mb-2">
+                                    店舗プレビュー（最初の{searchResult.shopsPreview.length}件）:
+                                </p>
+                                <ul className="text-sm text-gray-600 space-y-1">
+                                    {searchResult.shopsPreview.map((shop, i) => (
+                                        <li key={i} className="truncate">
+                                            {i + 1}. {shop.name}
+                                        </li>
+                                    ))}
+                                </ul>
+                            </div>
+                        )}
 
                         <div className="flex flex-col gap-2">
                             <label htmlFor="maxPages" className="font-semibold text-gray-700">
                                 <span className="bg-green-600 text-white px-2 py-1 rounded mr-2">ステップ2</span>
-                                取得するページ数
+                                取得するページ数を選択
                             </label>
                             <input
                                 id="maxPages"
@@ -158,9 +193,10 @@ export default function Home() {
                                 value={maxPages}
                                 onChange={(e) => setMaxPages(Math.min(Number(e.target.value), searchResult.totalPages))}
                             />
-                            <span className="text-xs text-gray-500">
-                                ※ 1〜{searchResult.totalPages}ページまで指定可能
-                            </span>
+                            <div className="text-xs text-gray-500 space-y-1">
+                                <p>※ 1〜{searchResult.totalPages}ページまで指定可能</p>
+                                <p>※ {maxPages}ページ = 約 {maxPages * searchResult.shopsOnPage} 店舗</p>
+                            </div>
                         </div>
 
                         <button
@@ -174,7 +210,10 @@ export default function Home() {
                                 }
                             `}
                         >
-                            {scraping ? `スクレイピング中... (${maxPages}ページ)` : `${maxPages}ページ分をスクレイピング開始`}
+                            {scraping
+                                ? `スクレイピング中... (${maxPages}ページ / 約${maxPages * searchResult.shopsOnPage}店舗)`
+                                : `${maxPages}ページ分をスクレイピング開始（約${maxPages * searchResult.shopsOnPage}店舗）`
+                            }
                         </button>
                     </div>
                 )}
@@ -185,7 +224,7 @@ export default function Home() {
 
                 {csvPreview && (
                     <div className="bg-white p-4 rounded-xl shadow-lg w-full max-w-4xl mt-8">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4">✅ CSVプレビュー</h2>
+                        <h2 className="text-xl font-bold text-gray-800 mb-4">CSVプレビュー</h2>
                         <textarea
                             className="w-full h-96 p-3 border border-gray-300 rounded-lg font-mono text-xs text-black"
                             value={csvPreview}

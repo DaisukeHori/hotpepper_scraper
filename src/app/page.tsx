@@ -44,13 +44,32 @@ interface ProgressState {
 }
 
 function formatTime(ms: number): string {
-    const seconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const totalSeconds = Math.floor(ms / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const secs = totalSeconds % 60;
+
+    if (hours > 0) {
+        return `${hours}時間${minutes}分${secs}秒`;
+    }
     if (minutes > 0) {
         return `${minutes}分${secs}秒`;
     }
     return `${secs}秒`;
+}
+
+function formatRemainingTime(seconds: number): string {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+
+    if (hours > 0) {
+        return `約${hours}時間${minutes}分`;
+    }
+    if (minutes > 0) {
+        return `約${minutes}分${secs}秒`;
+    }
+    return `約${secs}秒`;
 }
 
 function shopsToCsv(rows: ShopFull[]): string {
@@ -453,7 +472,7 @@ export default function Home() {
                                     <span>経過: {formatTime(progress.elapsedMs)}</span>
                                     <span>
                                         {progress.phase === 'processing' && progress.chunkNumber && progress.totalChunks && (
-                                            `残り約${Math.ceil((progress.totalChunks - progress.chunkNumber) * 7)}秒`
+                                            formatRemainingTime(Math.ceil((progress.totalChunks - progress.chunkNumber) * 7))
                                         )}
                                     </span>
                                 </div>

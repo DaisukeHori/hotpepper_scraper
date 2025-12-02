@@ -59,9 +59,10 @@ async function processSequentially<T, R>(
 
 async function fetchListPage(keyword: string, page: number): Promise<string> {
   const encoded = encodeURIComponent(keyword);
+  // 複合検索対応: searchTパラメータを追加
   const url =
     `https://beauty.hotpepper.jp/CSP/bt/salonSearch/search/?freeword=` +
-    `${encoded}&pn=${page}&searchGender=ALL&sortType=popular&fromSearchCondition=true`;
+    `${encoded}&pn=${page}&searchGender=ALL&sortType=popular&fromSearchCondition=true&searchT=${encodeURIComponent('検索')}`;
 
   const res = await fetch(url);
   return await res.text();
@@ -287,12 +288,13 @@ async function fetchShopFull(shop: ShopBase): Promise<ShopFull> {
 // --- CSV Generation ---
 
 function shopsToCsv(rows: ShopFull[]): string {
+  // ページと電話番号(マスク)カラムを削除
   const headers = [
-    "店名", "URL", "ページ",
-    "電話番号", "住所", "アクセス・道案内",
+    "店名", "URL",
+    "住所", "アクセス・道案内",
     "営業時間", "定休日", "支払い方法",
     "カット価格", "スタッフ数", "こだわり条件",
-    "備考", "その他", "電話番号(実際)"
+    "備考", "その他", "電話番号"
   ];
 
   const escape = (v: unknown) => {
@@ -306,8 +308,6 @@ function shopsToCsv(rows: ShopFull[]): string {
     ...rows.map(r => [
       escape(r.name),
       escape(r.url),
-      escape(r.page),
-      escape(r.telMask),
       escape(r.address),
       escape(r.access),
       escape(r.businessHours),

@@ -1,14 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 
 interface SearchResult {
     keyword: string;
     totalPages: number;
-    totalCount: number;
+    totalCount: number; // 正確な件数
     shopsOnPage: number;
     shopsPerPage: number;
-    estimatedTotal: number;
     shopsPreview: { name: string; url: string }[];
 }
 
@@ -17,8 +16,9 @@ export default function Home() {
     const [loading, setLoading] = useState(false);
     const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
     const [maxPages, setMaxPages] = useState(5);
-    const [csvPreview, setCsvPreview] = useState('');
+    const [csvData, setCsvData] = useState('');
     const [scraping, setScraping] = useState(false);
+    const [progress, setProgress] = useState('');
 
     // ステップ1: キーワード検索して総ページ数と店舗数を取得
     async function handleSearch() {
@@ -29,7 +29,8 @@ export default function Home() {
 
         setLoading(true);
         setSearchResult(null);
-        setCsvPreview('');
+        setCsvData('');
+        setProgress('');
 
         try {
             const res = await fetch(`/api/search?keyword=${encodeURIComponent(keyword)}`);
@@ -53,59 +54,74 @@ export default function Home() {
 
     // ステップ2: 実際のスクレイピングを実行
     async function handleScrape() {
+        if (!searchResult) return;
+
         setScraping(true);
-        setCsvPreview('');
+        setCsvData('');
+        setProgress('データ取得中...');
 
         try {
+            // 進捗表示の更新
+            const estimatedShops = maxPages * searchResult.shopsOnPage;
+            const estimatedTime = Math.ceil(estimatedShops * 0.3); // 約0.3秒/店舗
+            setProgress(`データ取得中... (約${estimatedShops}店舗、推定${estimatedTime}秒)`);
+
             const res = await fetch(`/api/scrape?keyword=${encodeURIComponent(keyword)}&maxPages=${maxPages}`);
 
             if (!res.ok) {
                 const errorText = await res.text();
                 alert("エラー：" + errorText);
                 setScraping(false);
+                setProgress('');
                 return;
             }
 
-            // CSVテキストを直接取得
+            // CSVテキストを取得
             const csvText = await res.text();
+            setCsvData(csvText);
+            setProgress('完了！下のボタンからダウンロードしてください。');
 
-            // プレビュー表示
-            setCsvPreview(csvText);
-
-            // ファイル名をサニタイズ
-            const sanitizedKeyword = keyword.replace(/[^a-zA-Z0-9ぁ-んァ-ヶ一-龯]/g, '_');
-            const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-            const filename = `hotpepper_${sanitizedKeyword}_${timestamp}.csv`;
-
-            // BOM付きUTF-8でBlobを作成（Excel対応）
-            const bom = '\uFEFF';
-            const blob = new Blob([bom + csvText], { type: 'text/csv;charset=utf-8;' });
-
-            // ダウンロードリンクを作成
-            const url = window.URL.createObjectURL(blob);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = filename;
-            link.style.display = 'none';
-
-            document.body.appendChild(link);
-            link.click();
-
-            // クリーンアップ
-            setTimeout(() => {
-                document.body.removeChild(link);
-                window.URL.revokeObjectURL(url);
-            }, 100);
-
-            console.log(`CSVダウンロード成功: ${filename}`);
-            alert(`ダウンロードしました: ${filename}`);
         } catch (error) {
             console.error('スクレイピングエラー:', error);
             alert('スクレイピング中にエラーが発生しました: ' + error);
+            setProgress('');
         } finally {
             setScraping(false);
         }
     }
+
+    // CSVダウンロード
+    const handleDownload = useCallback(() => {
+        if (!csvData) return;
+
+        // ファイル名をサニタイズ
+        const sanitizedKeyword = keyword.replace(/[^a-zA-Z0-9ぁ-んァ-ヶ一-龯]/g, '_');
+        const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+        const filename = `hotpepper_${sanitizedKeyword}_${timestamp}.csv`;
+
+        // BOM付きUTF-8でBlobを作成（Excel対応）
+        const bom = '\uFEFF';
+        const blob = new Blob([bom + csvData], { type: 'text/csv;charset=utf-8;' });
+
+        // ダウンロードリンクを作成
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.style.display = 'none';
+
+        document.body.appendChild(link);
+        link.click();
+
+        // クリーンアップ
+        setTimeout(() => {
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+        }, 100);
+    }, [csvData, keyword]);
+
+    // CSVの行数を取得
+    const csvRowCount = csvData ? csvData.split('\n').length - 1 : 0;
 
     return (
         <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-gray-50">
@@ -123,11 +139,12 @@ export default function Home() {
                             id="keyword"
                             type="text"
                             className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition text-black"
-                            placeholder="例: 渋谷、香草カラー"
+                            placeholder="例: 渋谷、香草カラー、良草 パーマ"
                             value={keyword}
                             onChange={(e) => setKeyword(e.target.value)}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                         />
+                        <p className="text-xs text-gray-500">※ スペース区切りで複合検索可能</p>
                     </div>
 
                     <button
@@ -154,12 +171,12 @@ export default function Home() {
                                 検索結果: 「{searchResult.keyword}」
                             </p>
                             <div className="grid grid-cols-2 gap-2 text-sm text-green-700">
+                                <div>総件数:</div>
+                                <div className="font-bold text-xl">{searchResult.totalCount.toLocaleString()} 件</div>
                                 <div>総ページ数:</div>
-                                <div className="font-bold text-xl">{searchResult.totalPages} ページ</div>
+                                <div className="font-bold">{searchResult.totalPages} ページ</div>
                                 <div>1ページあたり:</div>
                                 <div className="font-bold">{searchResult.shopsOnPage} 店舗</div>
-                                <div>推定総店舗数:</div>
-                                <div className="font-bold">{searchResult.estimatedTotal} 店舗</div>
                             </div>
                         </div>
 
@@ -211,9 +228,43 @@ export default function Home() {
                             `}
                         >
                             {scraping
-                                ? `スクレイピング中... (${maxPages}ページ / 約${maxPages * searchResult.shopsOnPage}店舗)`
+                                ? 'スクレイピング中...'
                                 : `${maxPages}ページ分をスクレイピング開始（約${maxPages * searchResult.shopsOnPage}店舗）`
                             }
+                        </button>
+
+                        {/* 進捗表示 */}
+                        {progress && (
+                            <div className={`p-3 rounded-lg text-center ${csvData ? 'bg-blue-50 text-blue-700' : 'bg-yellow-50 text-yellow-700'}`}>
+                                {scraping && (
+                                    <div className="flex items-center justify-center gap-2 mb-2">
+                                        <div className="animate-spin h-5 w-5 border-2 border-yellow-500 border-t-transparent rounded-full"></div>
+                                    </div>
+                                )}
+                                {progress}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* CSVダウンロードセクション */}
+                {csvData && (
+                    <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md flex flex-col gap-6">
+                        <div className="bg-blue-50 border border-blue-300 rounded-lg p-4">
+                            <p className="text-blue-800 font-semibold mb-2">
+                                <span className="bg-blue-600 text-white px-2 py-1 rounded mr-2">ステップ3</span>
+                                データ取得完了
+                            </p>
+                            <p className="text-blue-700">
+                                {csvRowCount}件のデータを取得しました
+                            </p>
+                        </div>
+
+                        <button
+                            onClick={handleDownload}
+                            className="w-full py-4 rounded-lg font-bold text-white text-lg shadow-md transition-all bg-orange-500 hover:bg-orange-600 hover:shadow-lg active:scale-95"
+                        >
+                            CSVをダウンロード
                         </button>
                     </div>
                 )}
@@ -222,20 +273,20 @@ export default function Home() {
                     ※ サーバーレス関数の制限により、処理に時間がかかる場合があります。
                 </div>
 
-                {csvPreview && (
+                {csvData && (
                     <div className="bg-white p-4 rounded-xl shadow-lg w-full max-w-4xl mt-8">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4">CSVプレビュー</h2>
+                        <h2 className="text-xl font-bold text-gray-800 mb-4">CSVプレビュー ({csvRowCount}件)</h2>
                         <textarea
                             className="w-full h-96 p-3 border border-gray-300 rounded-lg font-mono text-xs text-black"
-                            value={csvPreview}
+                            value={csvData}
                             readOnly
                         />
                         <button
                             onClick={() => {
-                                navigator.clipboard.writeText(csvPreview);
+                                navigator.clipboard.writeText(csvData);
                                 alert('CSVをクリップボードにコピーしました');
                             }}
-                            className="mt-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                            className="mt-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
                         >
                             クリップボードにコピー
                         </button>

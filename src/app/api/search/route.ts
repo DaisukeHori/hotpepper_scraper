@@ -5,9 +5,10 @@ import * as cheerio from 'cheerio';
 
 async function fetchListPage(keyword: string, page: number): Promise<string> {
     const encoded = encodeURIComponent(keyword);
+    // 複合検索対応: searchTパラメータを追加
     const url =
         `https://beauty.hotpepper.jp/CSP/bt/salonSearch/search/?freeword=` +
-        `${encoded}&pn=${page}&searchGender=ALL&sortType=popular&fromSearchCondition=true`;
+        `${encoded}&pn=${page}&searchGender=ALL&sortType=popular&fromSearchCondition=true&searchT=${encodeURIComponent('検索')}`;
 
     const res = await fetch(url);
     return await res.text();
@@ -35,6 +36,15 @@ function parseMaxPages(html: string): number {
     });
 
     return totalPages;
+}
+
+// --- Parse: Total Count from numberOfResult ---
+
+function parseTotalCount(html: string): number {
+    const $ = cheerio.load(html);
+    const countText = $("span.numberOfResult").first().text().trim();
+    const count = parseInt(countText.replace(/,/g, ''), 10);
+    return isNaN(count) ? 0 : count;
 }
 
 // --- Extract salon URL from href ---
@@ -111,16 +121,16 @@ export async function GET(req: Request) {
         // 1ページ目を取得して総ページ数と店舗数を確認
         const firstPage = await fetchListPage(keyword, 1);
         const totalPages = parseMaxPages(firstPage);
+        const totalCount = parseTotalCount(firstPage); // 正確な件数を取得
         const shopsPreview = parseShopsFromListPage(firstPage);
         const shopsOnPage = shopsPreview.length;
 
         return NextResponse.json({
             keyword,
             totalPages,
-            totalCount: shopsOnPage * totalPages,
+            totalCount, // 正確な件数
             shopsOnPage,
             shopsPerPage: shopsOnPage,
-            estimatedTotal: shopsOnPage * totalPages,
             shopsPreview: shopsPreview.slice(0, 5) // 最初の5件をプレビュー
         });
     } catch (error) {

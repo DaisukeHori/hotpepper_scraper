@@ -14,29 +14,27 @@ async function fetchListPage(keyword: string, page: number): Promise<string> {
 }
 
 // --- Parse: Max Pages ---
-// ページ全体から「X/Yページ」というパターンを正規表現で探す
+// pタグから「X/Yページ」というパターンを探す
 
 function parseMaxPages(html: string): number {
-    // 方法1: 正規表現で「X/Yページ」を探す
-    const match = html.match(/(\d+)\/(\d+)ページ/);
-    if (match) {
-        const totalPages = parseInt(match[2], 10);
-        if (!isNaN(totalPages) && totalPages > 0) {
-            return totalPages;
-        }
-    }
-
-    // 方法2: p.bottom0 を試す（PowerQuery互換）
     const $ = cheerio.load(html);
-    const text = $("p.bottom0").text();
-    const parts = text.split("/");
-    if (parts.length >= 2) {
-        const right = parts[1].replace("ページ", "").trim();
-        const num = Number(right);
-        if (!isNaN(num) && num > 0) return num;
-    }
 
-    return 1;
+    let totalPages = 1;
+
+    // すべてのpタグをチェックして「X/Yページ」パターンを探す
+    $("p").each((i, el) => {
+        const text = $(el).text();
+        const match = text.match(/(\d+)\/(\d+)ページ/);
+        if (match) {
+            const pages = parseInt(match[2], 10);
+            if (!isNaN(pages) && pages > 0) {
+                totalPages = pages;
+                return false; // ループ終了
+            }
+        }
+    });
+
+    return totalPages;
 }
 
 // --- Extract salon URL from href ---

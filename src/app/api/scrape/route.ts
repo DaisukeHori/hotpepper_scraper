@@ -67,24 +67,46 @@ async function fetchListPage(keyword: string, page: number): Promise<string> {
 }
 
 // --- Parse: Max Pages ---
+// ページ全体から「X/Yページ」というパターンを正規表現で探す
 
 function parseMaxPages(html: string): number {
+  // 方法1: 正規表現で「X/Yページ」を探す
+  const match = html.match(/(\d+)\/(\d+)ページ/);
+  if (match) {
+    const totalPages = parseInt(match[2], 10);
+    if (!isNaN(totalPages) && totalPages > 0) {
+      return totalPages;
+    }
+  }
+
+  // 方法2: p.bottom0 を試す（PowerQuery互換）
   const $ = cheerio.load(html);
-  const text = $("p.bottom0").text(); // e.g. "1/34ページ"
-
+  const text = $("p.bottom0").text();
   const parts = text.split("/");
-  if (parts.length < 2) return 1;
+  if (parts.length >= 2) {
+    const right = parts[1].replace("ページ", "").trim();
+    const num = Number(right);
+    if (!isNaN(num) && num > 0) return num;
+  }
 
-  const right = parts[1].replace("ページ", "").trim();
-  const num = Number(right);
-  return isNaN(num) ? 1 : num;
+  return 1;
+}
+
+// --- Extract salon URL from href ---
+// URLからサロンID部分（/slnH[数字]）のみを抽出
+
+function extractSalonUrl(href: string): string | null {
+  // /slnH[数字] の部分を正規表現で抽出
+  const match = href.match(/\/slnH\d+/);
+  if (!match) return null;
+
+  return "https://beauty.hotpepper.jp" + match[0];
 }
 
 // --- Parse: Shop List ---
 // PowerQuery: RowSelector = ".slnCassetteList > LI"
 //             店名 = ".slnName"
 //             URL = ".slnImgList > :nth-child(1) > A:nth-child(1):nth-last-child(1)" の href属性
-// PowerQuery: URLからクエリ文字列を落とす → Splitter.SplitTextByDelimiter("/?", ...)
 
 function parseShopsFromListPage(html: string): ShopBase[] {
   const $ = cheerio.load(html);
@@ -92,33 +114,20 @@ function parseShopsFromListPage(html: string): ShopBase[] {
   const rows = $(".slnCassetteList > li");
 
   const shops: ShopBase[] = [];
+  const seenUrls = new Set<string>(); // 重複チェック用
+
   rows.each((i, el) => {
     const $row = $(el);
 
-    // 店名を取得（.slnNameの直接のテキストのみ）
+    // 店名を取得
     const $slnName = $row.find(".slnName");
-    // 子要素のテキストを除外して、直接のテキストのみを取得
-    let name = $slnName.clone().children().remove().end().text().trim();
-
-    // slnNameが空の場合、全テキストを取得
-    if (!name) {
-      name = $slnName.text().trim();
-    }
+    let name = $slnName.text().trim();
 
     // URLを取得
     // PowerQuery: .slnImgList > :nth-child(1) > A:nth-child(1):nth-last-child(1)
     const $slnImgList = $row.find(".slnImgList");
     const $firstChild = $slnImgList.children().first();
-    const $anchors = $firstChild.find("a");
-
-    // 最初のaタグで、かつそれが唯一のaタグである場合のhrefを取得
-    let href: string | undefined;
-    if ($anchors.length === 1) {
-      href = $anchors.first().attr("href");
-    } else if ($anchors.length > 0) {
-      // 最初のaタグを使用
-      href = $anchors.first().attr("href");
-    }
+    let href = $firstChild.find("a").first().attr("href");
 
     if (!href) {
       // バックアップ: slnH を含む任意のリンク
@@ -127,24 +136,13 @@ function parseShopsFromListPage(html: string): ShopBase[] {
 
     if (!href) return;
 
-    // PowerQuery: "/?", で分割してクエリパラメータを削除
-    let url = href.split("/?")[0];
+    // URLからサロンID部分のみを抽出
+    const url = extractSalonUrl(href);
+    if (!url) return;
 
-    // さらに ? がある場合も削除
-    url = url.split("?")[0];
-
-    // 末尾のスラッシュを削除
-    url = url.replace(/\/$/, "");
-
-    // 絶対URL化
-    if (!url.startsWith("http")) {
-      url = "https://beauty.hotpepper.jp" + url;
-    }
-
-    // URLが正しい形式（/slnH[数字]）かどうかを確認
-    if (!url.match(/\/slnH\d+$/)) {
-      return;
-    }
+    // 重複チェック
+    if (seenUrls.has(url)) return;
+    seenUrls.add(url);
 
     // 店名が空の場合はスキップ
     if (!name) return;
@@ -157,8 +155,6 @@ function parseShopsFromListPage(html: string): ShopBase[] {
 
 // --- Fetch + Parse: Detail Page ---
 // PowerQuery: RowSelector = "TABLE.slnDataTbl.bdCell.bgThNml.fgThNml.vaThT.pCellV10H12.mT20 > * > TR"
-//             Column1 = TH (nth-child(1):nth-last-child(2) or nth-child(1):nth-last-child(4))
-//             Column2 = TD
 
 function parseShopDetail(html: string): ShopDetail {
   const $ = cheerio.load(html);
@@ -174,19 +170,15 @@ function parseShopDetail(html: string): ShopDetail {
     const $ths = $row.find("th");
     const $tds = $row.find("td");
 
-    // 最初のTH/TDペアを処理
-    if ($ths.length > 0 && $tds.length > 0) {
-      const th1 = $ths.eq(0).text().trim();
-      const td1 = $tds.eq(0).text().trim();
-      assignDetail(out, th1, td1);
-
-      // 2番目のTH/TDペアがある場合も処理（1行に2つの項目がある場合）
-      if ($ths.length >= 2 && $tds.length >= 2) {
-        const th2 = $ths.eq(1).text().trim();
-        const td2 = $tds.eq(1).text().trim();
-        assignDetail(out, th2, td2);
+    // 各TH/TDペアを処理
+    $ths.each((j, thEl) => {
+      const th = $(thEl).text().trim();
+      const $td = $tds.eq(j);
+      if ($td.length) {
+        const td = $td.text().trim();
+        assignDetail(out, th, td);
       }
-    }
+    });
   });
 
   return out;
@@ -231,12 +223,9 @@ function assignDetail(out: ShopDetail, th: string, td: string) {
 }
 
 // --- Fetch + Parse: Tel Page ---
-// 電話番号ページ (/tel/) から実際の電話番号を取得
 
 function parseShopTel(html: string): { telReal?: string } {
   const $ = cheerio.load(html);
-
-  // 複数のパターンを試す
   let tel: string | undefined = undefined;
 
   // パターン1: table.wFull.bdCell.pCell10.mT15 内のTH/TD
@@ -269,25 +258,12 @@ function parseShopTel(html: string): { telReal?: string } {
     }
   }
 
-  // パターン4: 電話番号形式のテキストを探す（03-XXXX-XXXX, 0120-XXX-XXX など）
-  if (!tel) {
-    const phonePattern = /0\d{1,4}[-\s]?\d{1,4}[-\s]?\d{3,4}/;
-    $("*").each((i, el) => {
-      const text = $(el).clone().children().remove().end().text().trim();
-      const match = text.match(phonePattern);
-      if (match && !tel) {
-        tel = match[0];
-      }
-    });
-  }
-
   return { telReal: tel };
 }
 
 // --- Aggregation: Fetch Shop Full ---
 
 async function fetchShopFull(shop: ShopBase): Promise<ShopFull> {
-  // 詳細ページと電話番号ページを並列で取得
   const [detailHtml, telHtml] = await Promise.all([
     fetch(shop.url).then(r => r.text()).catch(() => ""),
     fetch(shop.url + "/tel/").then(r => r.text()).catch(() => "")

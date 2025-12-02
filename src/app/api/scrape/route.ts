@@ -59,7 +59,6 @@ function sleep(ms: number): Promise<void> {
 
 async function fetchListPage(keyword: string, page: number): Promise<string> {
   const encoded = encodeURIComponent(keyword);
-  // 複合検索対応: searchTパラメータを追加
   const url =
     `https://beauty.hotpepper.jp/CSP/bt/salonSearch/search/?freeword=` +
     `${encoded}&pn=${page}&searchGender=ALL&sortType=popular&fromSearchCondition=true&searchT=${encodeURIComponent('検索')}`;
@@ -72,7 +71,6 @@ async function fetchListPage(keyword: string, page: number): Promise<string> {
 
 function parseMaxPages(html: string): number {
   const $ = cheerio.load(html);
-
   let totalPages = 1;
 
   $("p").each((i, el) => {
@@ -280,6 +278,54 @@ function formatSSE(event: SSEEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
+// --- Parallel Processing with Progress ---
+
+const WORKER_COUNT = 3; // 3並列
+const BATCH_DELAY_MS = 50; // バッチ間50ms遅延
+
+async function processInParallel<T, R>(
+  items: T[],
+  processFn: (item: T) => Promise<R>,
+  onProgress: (completed: number, total: number, currentItem?: T) => void
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let completed = 0;
+
+  // バッチに分割
+  for (let batchStart = 0; batchStart < items.length; batchStart += WORKER_COUNT) {
+    const batchEnd = Math.min(batchStart + WORKER_COUNT, items.length);
+    const batch = items.slice(batchStart, batchEnd);
+
+    // バッチ内を並列処理
+    const batchResults = await Promise.all(
+      batch.map(async (item, idx) => {
+        try {
+          const result = await processFn(item);
+          completed++;
+          onProgress(completed, items.length, item);
+          return { index: batchStart + idx, result };
+        } catch (e) {
+          completed++;
+          onProgress(completed, items.length, item);
+          return { index: batchStart + idx, result: item as unknown as R };
+        }
+      })
+    );
+
+    // 結果を正しい位置に配置
+    for (const { index, result } of batchResults) {
+      results[index] = result;
+    }
+
+    // 次のバッチ前に遅延
+    if (batchEnd < items.length) {
+      await sleep(BATCH_DELAY_MS);
+    }
+  }
+
+  return results;
+}
+
 // --- Main Route Handler with SSE ---
 
 export async function GET(req: Request) {
@@ -306,61 +352,46 @@ export async function GET(req: Request) {
         const totalPages = parseMaxPages(firstPage);
         const maxPages = Math.min(totalPages, maxPagesParam);
 
-        // 2. Fetch all list pages sequentially with progress
+        // 2. Fetch all list pages (並列処理)
         const pageNumbers = Array.from({ length: maxPages }, (_, i) => i + 1);
         const allShops: ShopBase[] = [];
 
-        for (let i = 0; i < pageNumbers.length; i++) {
-          const page = pageNumbers[i];
-
-          send({
-            type: 'progress',
-            phase: 'pages',
-            current: i + 1,
-            total: maxPages,
-            elapsedMs: Date.now() - startTime
-          });
-
-          try {
+        await processInParallel(
+          pageNumbers,
+          async (page) => {
             const html = page === 1 ? firstPage : await fetchListPage(keyword, page);
-            const shops = parseShopsFromListPage(html).map(s => ({ ...s, page }));
+            return parseShopsFromListPage(html).map(s => ({ ...s, page }));
+          },
+          (completed, total) => {
+            send({
+              type: 'progress',
+              phase: 'pages',
+              current: completed,
+              total,
+              elapsedMs: Date.now() - startTime
+            });
+          }
+        ).then(results => {
+          for (const shops of results) {
             allShops.push(...shops);
-          } catch (e) {
-            console.error(`Error fetching page ${page}:`, e);
           }
+        });
 
-          if (i < pageNumbers.length - 1) {
-            await sleep(200);
+        // 3. Fetch shop details (3並列 + 50ms遅延)
+        const fullShops = await processInParallel(
+          allShops,
+          fetchShopFull,
+          (completed, total, shop) => {
+            send({
+              type: 'progress',
+              phase: 'details',
+              current: completed,
+              total,
+              shopName: (shop as ShopBase)?.name,
+              elapsedMs: Date.now() - startTime
+            });
           }
-        }
-
-        // 3. Fetch shop details sequentially with progress
-        const fullShops: ShopFull[] = [];
-
-        for (let i = 0; i < allShops.length; i++) {
-          const shop = allShops[i];
-
-          send({
-            type: 'progress',
-            phase: 'details',
-            current: i + 1,
-            total: allShops.length,
-            shopName: shop.name,
-            elapsedMs: Date.now() - startTime
-          });
-
-          try {
-            const fullShop = await fetchShopFull(shop);
-            fullShops.push(fullShop);
-          } catch (e) {
-            console.error(`Error fetching shop ${shop.name}:`, e);
-            fullShops.push(shop); // 基本情報のみ追加
-          }
-
-          if (i < allShops.length - 1) {
-            await sleep(150);
-          }
-        }
+        );
 
         // 4. Generate CSV and send complete event
         const csv = shopsToCsv(fullShops);

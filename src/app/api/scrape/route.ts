@@ -26,28 +26,16 @@ interface ShopFull extends ShopBase, ShopDetail {
   telReal?: string;
 }
 
-interface ProgressEvent {
-  type: 'progress';
-  phase: 'pages' | 'details';
-  current: number;
-  total: number;
-  shopName?: string;
+// チャンク処理のレスポンス型
+interface ChunkResponse {
+  phase: 'collecting' | 'processing' | 'complete';
+  shops?: ShopBase[];           // collecting完了時に返す
+  results?: ShopFull[];         // processing時に返す
+  nextIndex?: number;           // 次のチャンク開始位置
+  totalShops?: number;          // 総店舗数
+  csv?: string;                 // complete時に返す
   elapsedMs: number;
 }
-
-interface CompleteEvent {
-  type: 'complete';
-  csv: string;
-  totalShops: number;
-  elapsedMs: number;
-}
-
-interface ErrorEvent {
-  type: 'error';
-  message: string;
-}
-
-type SSEEvent = ProgressEvent | CompleteEvent | ErrorEvent;
 
 // --- Utility: Sleep ---
 
@@ -272,53 +260,21 @@ function shopsToCsv(rows: ShopFull[]): string {
   return lines.join("\n");
 }
 
-// --- SSE Helper ---
+// --- Parallel batch processing ---
 
-function formatSSE(event: SSEEvent): string {
-  return `data: ${JSON.stringify(event)}\n\n`;
-}
+const WORKER_COUNT = 3;
+const BATCH_DELAY_MS = 30;
+const CHUNK_SIZE = 15; // 1チャンクあたり15店舗（約7秒で処理）
 
-// --- Parallel Processing with Progress ---
+async function processShopsBatch(shops: ShopBase[]): Promise<ShopFull[]> {
+  const results: ShopFull[] = [];
 
-const WORKER_COUNT = 3; // 3並列
-const BATCH_DELAY_MS = 50; // バッチ間50ms遅延
+  for (let i = 0; i < shops.length; i += WORKER_COUNT) {
+    const batch = shops.slice(i, i + WORKER_COUNT);
+    const batchResults = await Promise.all(batch.map(fetchShopFull));
+    results.push(...batchResults);
 
-async function processInParallel<T, R>(
-  items: T[],
-  processFn: (item: T) => Promise<R>,
-  onProgress: (completed: number, total: number, currentItem?: T) => void
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let completed = 0;
-
-  // バッチに分割
-  for (let batchStart = 0; batchStart < items.length; batchStart += WORKER_COUNT) {
-    const batchEnd = Math.min(batchStart + WORKER_COUNT, items.length);
-    const batch = items.slice(batchStart, batchEnd);
-
-    // バッチ内を並列処理
-    const batchResults = await Promise.all(
-      batch.map(async (item, idx) => {
-        try {
-          const result = await processFn(item);
-          completed++;
-          onProgress(completed, items.length, item);
-          return { index: batchStart + idx, result };
-        } catch (e) {
-          completed++;
-          onProgress(completed, items.length, item);
-          return { index: batchStart + idx, result: item as unknown as R };
-        }
-      })
-    );
-
-    // 結果を正しい位置に配置
-    for (const { index, result } of batchResults) {
-      results[index] = result;
-    }
-
-    // 次のバッチ前に遅延
-    if (batchEnd < items.length) {
+    if (i + WORKER_COUNT < shops.length) {
       await sleep(BATCH_DELAY_MS);
     }
   }
@@ -326,8 +282,96 @@ async function processInParallel<T, R>(
   return results;
 }
 
-// --- Main Route Handler with SSE ---
+// --- Main Route Handler (チャンク対応) ---
 
+export async function POST(req: Request) {
+  const startTime = Date.now();
+
+  try {
+    const body = await req.json();
+    const { keyword, maxPages, phase, shops, startIndex } = body;
+
+    // Phase 1: ページを取得して店舗リストを収集
+    if (phase === 'collect' || !phase) {
+      if (!keyword) {
+        return Response.json({ error: "keyword is required" }, { status: 400 });
+      }
+
+      const firstPage = await fetchListPage(keyword, 1);
+      const totalPages = parseMaxPages(firstPage);
+      const pagesToFetch = Math.min(totalPages, maxPages || 5);
+
+      const allShops: ShopBase[] = [];
+
+      // 3並列でページを取得
+      for (let i = 0; i < pagesToFetch; i += WORKER_COUNT) {
+        const batch = Array.from(
+          { length: Math.min(WORKER_COUNT, pagesToFetch - i) },
+          (_, j) => i + j + 1
+        );
+
+        const pageResults = await Promise.all(
+          batch.map(async (page) => {
+            const html = page === 1 ? firstPage : await fetchListPage(keyword, page);
+            return parseShopsFromListPage(html).map(s => ({ ...s, page }));
+          })
+        );
+
+        for (const shops of pageResults) {
+          allShops.push(...shops);
+        }
+
+        if (i + WORKER_COUNT < pagesToFetch) {
+          await sleep(BATCH_DELAY_MS);
+        }
+      }
+
+      const response: ChunkResponse = {
+        phase: 'collecting',
+        shops: allShops,
+        totalShops: allShops.length,
+        nextIndex: 0,
+        elapsedMs: Date.now() - startTime
+      };
+
+      return Response.json(response);
+    }
+
+    // Phase 2: 店舗詳細を取得（チャンク単位）
+    if (phase === 'process') {
+      const shopsToProcess: ShopBase[] = shops || [];
+      const idx = startIndex || 0;
+
+      // 残りの店舗からチャンク分を処理
+      const chunk = shopsToProcess.slice(idx, idx + CHUNK_SIZE);
+      const results = await processShopsBatch(chunk);
+
+      const nextIdx = idx + CHUNK_SIZE;
+      const isComplete = nextIdx >= shopsToProcess.length;
+
+      const response: ChunkResponse = {
+        phase: isComplete ? 'complete' : 'processing',
+        results,
+        nextIndex: isComplete ? undefined : nextIdx,
+        totalShops: shopsToProcess.length,
+        elapsedMs: Date.now() - startTime
+      };
+
+      return Response.json(response);
+    }
+
+    return Response.json({ error: "Invalid phase" }, { status: 400 });
+
+  } catch (error) {
+    console.error(error);
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'Unknown error' },
+      { status: 500 }
+    );
+  }
+}
+
+// GETは引き続きSSEストリーミングをサポート（小規模用）
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const keyword = searchParams.get("keyword") ?? "";
@@ -337,78 +381,62 @@ export async function GET(req: Request) {
     return new Response("keyword is required", { status: 400 });
   }
 
+  // 小規模（2ページ以下）はそのまま処理
   const encoder = new TextEncoder();
   const startTime = Date.now();
 
   const stream = new ReadableStream({
     async start(controller) {
-      const send = (event: SSEEvent) => {
-        controller.enqueue(encoder.encode(formatSSE(event)));
+      const send = (data: object) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
 
       try {
-        // 1. Fetch 1st page to get total pages
         const firstPage = await fetchListPage(keyword, 1);
         const totalPages = parseMaxPages(firstPage);
         const maxPages = Math.min(totalPages, maxPagesParam);
 
-        // 2. Fetch all list pages (並列処理)
-        const pageNumbers = Array.from({ length: maxPages }, (_, i) => i + 1);
+        // ページ収集
         const allShops: ShopBase[] = [];
+        for (let i = 0; i < maxPages; i += WORKER_COUNT) {
+          const batch = Array.from(
+            { length: Math.min(WORKER_COUNT, maxPages - i) },
+            (_, j) => i + j + 1
+          );
 
-        await processInParallel(
-          pageNumbers,
-          async (page) => {
-            const html = page === 1 ? firstPage : await fetchListPage(keyword, page);
-            return parseShopsFromListPage(html).map(s => ({ ...s, page }));
-          },
-          (completed, total) => {
-            send({
-              type: 'progress',
-              phase: 'pages',
-              current: completed,
-              total,
-              elapsedMs: Date.now() - startTime
-            });
-          }
-        ).then(results => {
+          const results = await Promise.all(
+            batch.map(async (page) => {
+              const html = page === 1 ? firstPage : await fetchListPage(keyword, page);
+              return parseShopsFromListPage(html).map(s => ({ ...s, page }));
+            })
+          );
+
           for (const shops of results) {
             allShops.push(...shops);
           }
-        });
 
-        // 3. Fetch shop details (3並列 + 50ms遅延)
-        const fullShops = await processInParallel(
-          allShops,
-          fetchShopFull,
-          (completed, total, shop) => {
-            send({
-              type: 'progress',
-              phase: 'details',
-              current: completed,
-              total,
-              shopName: (shop as ShopBase)?.name,
-              elapsedMs: Date.now() - startTime
-            });
-          }
-        );
+          send({ type: 'progress', phase: 'pages', current: Math.min(i + WORKER_COUNT, maxPages), total: maxPages, elapsedMs: Date.now() - startTime });
 
-        // 4. Generate CSV and send complete event
+          if (i + WORKER_COUNT < maxPages) await sleep(BATCH_DELAY_MS);
+        }
+
+        // 詳細取得
+        const fullShops: ShopFull[] = [];
+        for (let i = 0; i < allShops.length; i += WORKER_COUNT) {
+          const batch = allShops.slice(i, i + WORKER_COUNT);
+          const results = await Promise.all(batch.map(fetchShopFull));
+          fullShops.push(...results);
+
+          send({ type: 'progress', phase: 'details', current: Math.min(i + WORKER_COUNT, allShops.length), total: allShops.length, elapsedMs: Date.now() - startTime });
+
+          if (i + WORKER_COUNT < allShops.length) await sleep(BATCH_DELAY_MS);
+        }
+
         const csv = shopsToCsv(fullShops);
-
-        send({
-          type: 'complete',
-          csv,
-          totalShops: fullShops.length,
-          elapsedMs: Date.now() - startTime
-        });
+        send({ type: 'complete', csv, totalShops: fullShops.length, elapsedMs: Date.now() - startTime });
 
       } catch (error) {
-        console.error(error);
-        send({
-          type: 'error',
-          message: error instanceof Error ? error.message : 'Unknown error'
-        });
+        send({ type: 'error', message: error instanceof Error ? error.message : 'Unknown error' });
       } finally {
         controller.close();
       }

@@ -11,11 +11,32 @@ interface SearchResult {
     shopsPreview: { name: string; url: string }[];
 }
 
+interface ShopBase {
+    name: string;
+    url: string;
+    page: number;
+}
+
+interface ShopFull extends ShopBase {
+    address?: string;
+    access?: string;
+    businessHours?: string;
+    holiday?: string;
+    payment?: string;
+    cutPrice?: string;
+    staffCount?: string;
+    features?: string;
+    remark?: string;
+    others?: string;
+    telReal?: string;
+}
+
 interface ProgressState {
-    phase: 'pages' | 'details' | 'idle';
+    phase: 'idle' | 'collecting' | 'processing' | 'complete';
     current: number;
     total: number;
-    shopName?: string;
+    chunkNumber?: number;
+    totalChunks?: number;
     elapsedMs: number;
 }
 
@@ -29,11 +50,41 @@ function formatTime(ms: number): string {
     return `${secs}秒`;
 }
 
-function estimateRemaining(current: number, total: number, elapsedMs: number): string {
-    if (current === 0) return '計算中...';
-    const msPerItem = elapsedMs / current;
-    const remaining = (total - current) * msPerItem;
-    return formatTime(remaining);
+function shopsToCsv(rows: ShopFull[]): string {
+    const headers = [
+        "店名", "URL",
+        "住所", "アクセス・道案内",
+        "営業時間", "定休日", "支払い方法",
+        "カット価格", "スタッフ数", "こだわり条件",
+        "備考", "その他", "電話番号"
+    ];
+
+    const escape = (v: unknown) => {
+        if (v == null) return "";
+        const s = String(v).replace(/"/g, '""');
+        return `"${s}"`;
+    };
+
+    const lines = [
+        headers.join(","),
+        ...rows.map(r => [
+            escape(r.name),
+            escape(r.url),
+            escape(r.address),
+            escape(r.access),
+            escape(r.businessHours),
+            escape(r.holiday),
+            escape(r.payment),
+            escape(r.cutPrice),
+            escape(r.staffCount),
+            escape(r.features),
+            escape(r.remark),
+            escape(r.others),
+            escape(r.telReal)
+        ].join(","))
+    ];
+
+    return lines.join("\n");
 }
 
 export default function Home() {
@@ -45,6 +96,7 @@ export default function Home() {
     const [scraping, setScraping] = useState(false);
     const [progress, setProgress] = useState<ProgressState>({ phase: 'idle', current: 0, total: 0, elapsedMs: 0 });
     const isComposingRef = useRef(false);
+    const startTimeRef = useRef(0);
 
     // ステップ1: キーワード検索
     async function handleSearch() {
@@ -80,82 +132,103 @@ export default function Home() {
 
     // IME対応のキーダウンハンドラ
     function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-        // IME変換中はEnterを無視
         if (e.key === 'Enter' && !isComposingRef.current) {
             handleSearch();
         }
     }
 
-    // ステップ2: SSEでスクレイピング実行
+    // ステップ2: チャンク処理でスクレイピング
     async function handleScrape() {
         if (!searchResult) return;
 
         setScraping(true);
         setCsvData('');
-        setProgress({ phase: 'pages', current: 0, total: maxPages, elapsedMs: 0 });
+        startTimeRef.current = Date.now();
+        setProgress({ phase: 'collecting', current: 0, total: maxPages, elapsedMs: 0 });
 
         try {
-            const res = await fetch(`/api/scrape?keyword=${encodeURIComponent(keyword)}&maxPages=${maxPages}`);
+            // Phase 1: ページを収集して店舗リストを取得
+            const collectRes = await fetch('/api/scrape', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    keyword,
+                    maxPages,
+                    phase: 'collect'
+                })
+            });
 
-            if (!res.ok) {
-                const errorText = await res.text();
-                alert("エラー：" + errorText);
+            if (!collectRes.ok) {
+                throw new Error(await collectRes.text());
+            }
+
+            const collectData = await collectRes.json();
+            const shops: ShopBase[] = collectData.shops || [];
+            const totalShops = shops.length;
+
+            if (totalShops === 0) {
+                alert('店舗が見つかりませんでした');
                 setScraping(false);
                 return;
             }
 
-            const reader = res.body?.getReader();
-            if (!reader) {
-                throw new Error('Stream not available');
-            }
+            // Phase 2: チャンク単位で店舗詳細を取得（リレー式）
+            const CHUNK_SIZE = 15;
+            const totalChunks = Math.ceil(totalShops / CHUNK_SIZE);
+            const allResults: ShopFull[] = [];
+            let currentIndex = 0;
+            let chunkNumber = 1;
 
-            const decoder = new TextDecoder();
-            let buffer = '';
+            while (currentIndex < totalShops) {
+                setProgress({
+                    phase: 'processing',
+                    current: currentIndex,
+                    total: totalShops,
+                    chunkNumber,
+                    totalChunks,
+                    elapsedMs: Date.now() - startTimeRef.current
+                });
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
+                const processRes = await fetch('/api/scrape', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phase: 'process',
+                        shops,
+                        startIndex: currentIndex
+                    })
+                });
 
-                buffer += decoder.decode(value, { stream: true });
-
-                // SSEイベントをパース
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop() || '';
-
-                for (const line of lines) {
-                    if (line.startsWith('data: ')) {
-                        try {
-                            const event = JSON.parse(line.slice(6));
-
-                            if (event.type === 'progress') {
-                                setProgress({
-                                    phase: event.phase,
-                                    current: event.current,
-                                    total: event.total,
-                                    shopName: event.shopName,
-                                    elapsedMs: event.elapsedMs
-                                });
-                            } else if (event.type === 'complete') {
-                                setCsvData(event.csv);
-                                setProgress({
-                                    phase: 'idle',
-                                    current: event.totalShops,
-                                    total: event.totalShops,
-                                    elapsedMs: event.elapsedMs
-                                });
-                            } else if (event.type === 'error') {
-                                alert('エラー: ' + event.message);
-                            }
-                        } catch (e) {
-                            console.error('Failed to parse SSE event:', e);
-                        }
-                    }
+                if (!processRes.ok) {
+                    throw new Error(await processRes.text());
                 }
+
+                const processData = await processRes.json();
+                const results: ShopFull[] = processData.results || [];
+                allResults.push(...results);
+
+                if (processData.phase === 'complete' || processData.nextIndex === undefined) {
+                    break;
+                }
+
+                currentIndex = processData.nextIndex;
+                chunkNumber++;
             }
+
+            // CSV生成
+            const csv = shopsToCsv(allResults);
+            setCsvData(csv);
+            setProgress({
+                phase: 'complete',
+                current: allResults.length,
+                total: totalShops,
+                elapsedMs: Date.now() - startTimeRef.current
+            });
 
         } catch (error) {
             console.error('スクレイピングエラー:', error);
             alert('スクレイピング中にエラーが発生しました: ' + error);
+            setProgress({ phase: 'idle', current: 0, total: 0, elapsedMs: 0 });
         } finally {
             setScraping(false);
         }
@@ -187,10 +260,7 @@ export default function Home() {
         }, 100);
     }, [csvData, keyword]);
 
-    // CSVの行数を取得
     const csvRowCount = csvData ? csvData.split('\n').length - 1 : 0;
-
-    // 進捗バーの計算
     const progressPercent = progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
 
     return (
@@ -237,7 +307,6 @@ export default function Home() {
                 {/* ステップ2: ページ数選択とスクレイピング実行 */}
                 {searchResult && (
                     <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md flex flex-col gap-6">
-                        {/* 検索結果の詳細表示 */}
                         <div className="bg-green-50 border border-green-300 rounded-lg p-4">
                             <p className="text-green-800 font-semibold mb-2">
                                 検索結果: 「{searchResult.keyword}」
@@ -252,7 +321,6 @@ export default function Home() {
                             </div>
                         </div>
 
-                        {/* 店舗プレビュー */}
                         {searchResult.shopsPreview && searchResult.shopsPreview.length > 0 && (
                             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                                 <p className="text-gray-700 font-semibold mb-2">
@@ -310,14 +378,14 @@ export default function Home() {
                             <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4 space-y-3">
                                 <div className="flex justify-between items-center text-sm text-yellow-800">
                                     <span className="font-semibold">
-                                        {progress.phase === 'pages' ? 'ページ取得中' : '店舗詳細取得中'}
+                                        {progress.phase === 'collecting' ? 'ページ収集中' : '店舗詳細取得中'}
+                                        {progress.chunkNumber && ` (チャンク ${progress.chunkNumber}/${progress.totalChunks})`}
                                     </span>
                                     <span>
                                         {progress.current} / {progress.total}
                                     </span>
                                 </div>
 
-                                {/* プログレスバー */}
                                 <div className="w-full bg-yellow-200 rounded-full h-4 overflow-hidden">
                                     <div
                                         className="bg-yellow-500 h-4 rounded-full transition-all duration-300"
@@ -327,14 +395,12 @@ export default function Home() {
 
                                 <div className="flex justify-between text-xs text-yellow-700">
                                     <span>経過: {formatTime(progress.elapsedMs)}</span>
-                                    <span>残り: 約{estimateRemaining(progress.current, progress.total, progress.elapsedMs)}</span>
+                                    <span>
+                                        {progress.phase === 'processing' && progress.chunkNumber && progress.totalChunks && (
+                                            `残り約${Math.ceil((progress.totalChunks - progress.chunkNumber) * 7)}秒`
+                                        )}
+                                    </span>
                                 </div>
-
-                                {progress.shopName && (
-                                    <div className="text-xs text-yellow-700 truncate">
-                                        処理中: {progress.shopName}
-                                    </div>
-                                )}
                             </div>
                         )}
                     </div>
@@ -363,8 +429,8 @@ export default function Home() {
                     </div>
                 )}
 
-                <div className="text-gray-500 text-xs mt-4">
-                    ※ サーバーレス関数の制限により、処理に時間がかかる場合があります。
+                <div className="text-gray-500 text-xs mt-4 text-center">
+                    ※ Vercel Hobby対応：チャンク処理で10秒制限を回避
                 </div>
 
                 {csvData && (

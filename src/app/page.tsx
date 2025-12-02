@@ -40,6 +40,7 @@ interface ProgressState {
     elapsedMs: number;
     currentShopNames?: string[];   // 現在処理中のチャンクの店舗名リスト
     processedCount?: number;       // 実際に処理した件数
+    lastProcessedShops?: string[]; // 直前に処理完了した店舗名リスト
 }
 
 function formatTime(ms: number): string {
@@ -198,6 +199,7 @@ export default function Home() {
 
             // 最初のチャンク処理前に店舗名リストを設定
             let currentShopNames = shops.slice(0, CHUNK_SIZE).map(s => s.name);
+            let lastProcessedShops: string[] = [];
 
             while (currentIndex < totalShops) {
                 setProgress({
@@ -208,7 +210,8 @@ export default function Home() {
                     totalChunks,
                     elapsedMs: Date.now() - startTimeRef.current,
                     currentShopNames,
-                    processedCount: allResults.length
+                    processedCount: allResults.length,
+                    lastProcessedShops
                 });
 
                 const processRes = await fetch('/api/scrape', {
@@ -227,6 +230,9 @@ export default function Home() {
 
                 const processData = await processRes.json();
                 const results: ShopFull[] = processData.results || [];
+
+                // 処理完了した店舗名を記録
+                lastProcessedShops = results.map(r => r.name);
                 allResults.push(...results);
 
                 // 次のチャンクの店舗名リストを取得
@@ -421,10 +427,18 @@ export default function Home() {
                                     </span>
                                 </div>
 
+                                {/* 処理完了した店舗（直前のチャンク） */}
+                                {progress.phase === 'processing' && progress.lastProcessedShops && progress.lastProcessedShops.length > 0 && (
+                                    <div className="text-xs text-green-700 bg-green-100 rounded px-2 py-1 max-h-16 overflow-y-auto">
+                                        <span className="font-semibold">✓ 取得完了:</span> {progress.lastProcessedShops.slice(-3).join(', ')}
+                                        {progress.lastProcessedShops.length > 3 && ` 他${progress.lastProcessedShops.length - 3}件`}
+                                    </div>
+                                )}
+
                                 {/* 現在処理中の店舗名（ころころ切り替わる） */}
                                 {progress.phase === 'processing' && progress.currentShopNames && progress.currentShopNames.length > 0 && (
                                     <div className="text-xs text-yellow-700 truncate bg-yellow-100 rounded px-2 py-1">
-                                        📍 {progress.currentShopNames[displayShopIndex]} ({displayShopIndex + 1}/{progress.currentShopNames.length})
+                                        ⏳ 取得中: {progress.currentShopNames[displayShopIndex]} ({displayShopIndex + 1}/{progress.currentShopNames.length})
                                     </div>
                                 )}
 

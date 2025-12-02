@@ -221,7 +221,23 @@ function shopsToCsv(rows: ShopFull[]): string {
 
   const lines = [
     headers.join(","),
-    ...rows.map(r => headers.map(h => escape((r as any)[h])).join(","))
+    ...rows.map(r => [
+      escape(r.name),
+      escape(r.url),
+      escape(r.page),
+      escape(r.telMask),
+      escape(r.address),
+      escape(r.access),
+      escape(r.businessHours),
+      escape(r.holiday),
+      escape(r.payment),
+      escape(r.cutPrice),
+      escape(r.staffCount),
+      escape(r.features),
+      escape(r.remark),
+      escape(r.others),
+      escape(r.telReal)
+    ].join(","))
   ];
 
   return lines.join("\n");

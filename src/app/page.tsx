@@ -410,7 +410,7 @@ export default function Home() {
                             />
                             <div className="text-xs text-gray-500 space-y-1">
                                 <p>※ 1〜{searchResult.totalCount.toLocaleString()}件まで指定可能</p>
-                                <p>※ {Math.ceil(maxShops / searchResult.shopsOnPage)}ページ分を取得</p>
+                                <p>※ 処理目安: 約{formatRemainingTime(Math.ceil(maxShops / 250 * 60))}（250件/分）</p>
                             </div>
                         </div>
 

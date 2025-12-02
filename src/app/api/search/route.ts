@@ -14,17 +14,89 @@ async function fetchListPage(keyword: string, page: number): Promise<string> {
 }
 
 // --- Parse: Max Pages ---
+// ページ全体から「X/Yページ」というパターンを正規表現で探す
 
 function parseMaxPages(html: string): number {
+    // 方法1: 正規表現で「X/Yページ」を探す
+    const match = html.match(/(\d+)\/(\d+)ページ/);
+    if (match) {
+        const totalPages = parseInt(match[2], 10);
+        if (!isNaN(totalPages) && totalPages > 0) {
+            return totalPages;
+        }
+    }
+
+    // 方法2: p.bottom0 を試す（PowerQuery互換）
     const $ = cheerio.load(html);
-    const text = $("p.bottom0").text(); // e.g. "1/34ページ"
-
+    const text = $("p.bottom0").text();
     const parts = text.split("/");
-    if (parts.length < 2) return 1;
+    if (parts.length >= 2) {
+        const right = parts[1].replace("ページ", "").trim();
+        const num = Number(right);
+        if (!isNaN(num) && num > 0) return num;
+    }
 
-    const right = parts[1].replace("ページ", "").trim();
-    const num = Number(right);
-    return isNaN(num) ? 1 : num;
+    return 1;
+}
+
+// --- Extract salon URL from href ---
+// URLからサロンID部分（/slnH[数字]）のみを抽出
+
+function extractSalonUrl(href: string): string | null {
+    // /slnH[数字] の部分を正規表現で抽出
+    const match = href.match(/\/slnH\d+/);
+    if (!match) return null;
+
+    return "https://beauty.hotpepper.jp" + match[0];
+}
+
+// --- Parse: Shop List from Page ---
+
+interface ShopPreview {
+    name: string;
+    url: string;
+}
+
+function parseShopsFromListPage(html: string): ShopPreview[] {
+    const $ = cheerio.load(html);
+    const shops: ShopPreview[] = [];
+    const seenUrls = new Set<string>(); // 重複チェック用
+
+    // PowerQueryと同じセレクタを使用
+    $(".slnCassetteList > li").each((i, el) => {
+        const $row = $(el);
+
+        // 店名を取得
+        const $slnName = $row.find(".slnName");
+        let name = $slnName.text().trim();
+
+        // URLを取得
+        const $slnImgList = $row.find(".slnImgList");
+        const $firstChild = $slnImgList.children().first();
+        let href = $firstChild.find("a").first().attr("href");
+
+        if (!href) {
+            // バックアップ: slnH を含む任意のリンク
+            href = $row.find("a[href*='/slnH']").first().attr("href");
+        }
+
+        if (!href) return;
+
+        // URLからサロンID部分のみを抽出
+        const url = extractSalonUrl(href);
+        if (!url) return;
+
+        // 重複チェック
+        if (seenUrls.has(url)) return;
+        seenUrls.add(url);
+
+        // 店名が空の場合はスキップ
+        if (!name) return;
+
+        shops.push({ name, url });
+    });
+
+    return shops;
 }
 
 // --- Main Route Handler ---
@@ -38,13 +110,20 @@ export async function GET(req: Request) {
     }
 
     try {
-        // 1ページ目を取得して総ページ数を確認
+        // 1ページ目を取得して総ページ数と店舗数を確認
         const firstPage = await fetchListPage(keyword, 1);
         const totalPages = parseMaxPages(firstPage);
+        const shopsPreview = parseShopsFromListPage(firstPage);
+        const shopsOnPage = shopsPreview.length;
 
         return NextResponse.json({
             keyword,
-            totalPages
+            totalPages,
+            totalCount: shopsOnPage * totalPages,
+            shopsOnPage,
+            shopsPerPage: shopsOnPage,
+            estimatedTotal: shopsOnPage * totalPages,
+            shopsPreview: shopsPreview.slice(0, 5) // 最初の5件をプレビュー
         });
     } catch (error) {
         console.error(error);

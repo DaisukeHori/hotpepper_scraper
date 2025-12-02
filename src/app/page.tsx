@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 interface SearchResult {
     keyword: string;
@@ -38,8 +38,9 @@ interface ProgressState {
     chunkNumber?: number;
     totalChunks?: number;
     elapsedMs: number;
-    currentShopName?: string;      // 現在処理中の店舗名
+    currentShopNames?: string[];   // 現在処理中のチャンクの店舗名リスト
     processedCount?: number;       // 実際に処理した件数
+    lastProcessedShops?: string[]; // 直前に処理完了した店舗名リスト
 }
 
 function formatTime(ms: number): string {
@@ -97,8 +98,23 @@ export default function Home() {
     const [csvData, setCsvData] = useState('');
     const [scraping, setScraping] = useState(false);
     const [progress, setProgress] = useState<ProgressState>({ phase: 'idle', current: 0, total: 0, elapsedMs: 0 });
+    const [displayShopIndex, setDisplayShopIndex] = useState(0);
     const isComposingRef = useRef(false);
     const startTimeRef = useRef(0);
+
+    // 店舗名をころころ切り替えるアニメーション
+    useEffect(() => {
+        if (progress.phase !== 'processing' || !progress.currentShopNames || progress.currentShopNames.length === 0) {
+            setDisplayShopIndex(0);
+            return;
+        }
+
+        const interval = setInterval(() => {
+            setDisplayShopIndex(prev => (prev + 1) % progress.currentShopNames!.length);
+        }, 400); // 0.4秒ごとに切り替え
+
+        return () => clearInterval(interval);
+    }, [progress.phase, progress.currentShopNames]);
 
     // ステップ1: キーワード検索
     async function handleSearch() {
@@ -181,8 +197,9 @@ export default function Home() {
             let currentIndex = 0;
             let chunkNumber = 1;
 
-            // 最初のチャンク処理前に店舗名を設定
-            let currentShopName = shops.length > 0 ? shops[0].name : '';
+            // 最初のチャンク処理前に店舗名リストを設定
+            let currentShopNames = shops.slice(0, CHUNK_SIZE).map(s => s.name);
+            let lastProcessedShops: string[] = [];
 
             while (currentIndex < totalShops) {
                 setProgress({
@@ -192,8 +209,9 @@ export default function Home() {
                     chunkNumber,
                     totalChunks,
                     elapsedMs: Date.now() - startTimeRef.current,
-                    currentShopName,
-                    processedCount: allResults.length
+                    currentShopNames,
+                    processedCount: allResults.length,
+                    lastProcessedShops
                 });
 
                 const processRes = await fetch('/api/scrape', {
@@ -212,11 +230,14 @@ export default function Home() {
 
                 const processData = await processRes.json();
                 const results: ShopFull[] = processData.results || [];
+
+                // 処理完了した店舗名を記録
+                lastProcessedShops = results.map(r => r.name);
                 allResults.push(...results);
 
-                // 次のチャンクの最初の店舗名を取得
+                // 次のチャンクの店舗名リストを取得
                 if (processData.currentShopNames && processData.currentShopNames.length > 0) {
-                    currentShopName = processData.currentShopNames[0];
+                    currentShopNames = processData.currentShopNames;
                 }
 
                 if (processData.phase === 'complete' || processData.nextIndex === undefined) {
@@ -406,10 +427,18 @@ export default function Home() {
                                     </span>
                                 </div>
 
-                                {/* 現在処理中の店舗名 */}
-                                {progress.phase === 'processing' && progress.currentShopName && (
-                                    <div className="text-xs text-yellow-700 truncate">
-                                        📍 {progress.currentShopName}
+                                {/* 処理完了した店舗（直前のチャンク） */}
+                                {progress.phase === 'processing' && progress.lastProcessedShops && progress.lastProcessedShops.length > 0 && (
+                                    <div className="text-xs text-green-700 bg-green-100 rounded px-2 py-1 max-h-16 overflow-y-auto">
+                                        <span className="font-semibold">✓ 取得完了:</span> {progress.lastProcessedShops.slice(-3).join(', ')}
+                                        {progress.lastProcessedShops.length > 3 && ` 他${progress.lastProcessedShops.length - 3}件`}
+                                    </div>
+                                )}
+
+                                {/* 現在処理中の店舗名（ころころ切り替わる） */}
+                                {progress.phase === 'processing' && progress.currentShopNames && progress.currentShopNames.length > 0 && (
+                                    <div className="text-xs text-yellow-700 truncate bg-yellow-100 rounded px-2 py-1">
+                                        ⏳ 取得中: {progress.currentShopNames[displayShopIndex]} ({displayShopIndex + 1}/{progress.currentShopNames.length})
                                     </div>
                                 )}
 
@@ -456,29 +485,6 @@ export default function Home() {
                     </div>
                 )}
 
-                <div className="text-gray-500 text-xs mt-4 text-center">
-                    ※ Vercel Hobby対応：チャンク処理で10秒制限を回避
-                </div>
-
-                {csvData && (
-                    <div className="bg-white p-4 rounded-xl shadow-lg w-full max-w-4xl mt-8">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4">CSVプレビュー ({progress.processedCount ?? progress.current}件)</h2>
-                        <textarea
-                            className="w-full h-96 p-3 border border-gray-300 rounded-lg font-mono text-xs text-black"
-                            value={csvData}
-                            readOnly
-                        />
-                        <button
-                            onClick={() => {
-                                navigator.clipboard.writeText(csvData);
-                                alert('CSVをクリップボードにコピーしました');
-                            }}
-                            className="mt-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                        >
-                            クリップボードにコピー
-                        </button>
-                    </div>
-                )}
             </div>
         </main>
     );

@@ -113,7 +113,7 @@ export default function Home() {
     const [keyword, setKeyword] = useState('');
     const [loading, setLoading] = useState(false);
     const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
-    const [maxPages, setMaxPages] = useState(5);
+    const [maxShops, setMaxShops] = useState(100);
     const [csvData, setCsvData] = useState('');
     const [scraping, setScraping] = useState(false);
     const [progress, setProgress] = useState<ProgressState>({ phase: 'idle', current: 0, total: 0, elapsedMs: 0 });
@@ -158,7 +158,8 @@ export default function Home() {
 
             const data: SearchResult = await res.json();
             setSearchResult(data);
-            setMaxPages(Math.min(data.totalPages, 5));
+            // デフォルトは総件数か100件の小さい方
+            setMaxShops(Math.min(data.totalCount, 100));
         } catch (error) {
             console.error('検索エラー:', error);
             alert('検索中にエラーが発生しました: ' + error);
@@ -181,7 +182,10 @@ export default function Home() {
         setScraping(true);
         setCsvData('');
         startTimeRef.current = Date.now();
-        setProgress({ phase: 'collecting', current: 0, total: maxPages, elapsedMs: 0 });
+
+        // 件数から必要なページ数を計算
+        const requiredPages = Math.ceil(maxShops / searchResult.shopsOnPage);
+        setProgress({ phase: 'collecting', current: 0, total: requiredPages, elapsedMs: 0 });
 
         try {
             // Phase 1: ページを収集して店舗リストを取得
@@ -190,7 +194,7 @@ export default function Home() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     keyword,
-                    maxPages,
+                    maxPages: requiredPages,
                     phase: 'collect'
                 })
             });
@@ -200,7 +204,9 @@ export default function Home() {
             }
 
             const collectData = await collectRes.json();
-            const shops: ShopBase[] = collectData.shops || [];
+            // 指定件数だけに切り詰める
+            const allCollectedShops: ShopBase[] = collectData.shops || [];
+            const shops = allCollectedShops.slice(0, maxShops);
             const totalShops = shops.length;
 
             if (totalShops === 0) {
@@ -352,11 +358,11 @@ export default function Home() {
                             }
                         `}
                     >
-                        {loading ? '検索中...' : '検索して総ページ数を確認'}
+                        {loading ? '検索中...' : '検索して総件数を確認'}
                     </button>
                 </div>
 
-                {/* ステップ2: ページ数選択とスクレイピング実行 */}
+                {/* ステップ2: 件数選択とスクレイピング実行 */}
                 {searchResult && (
                     <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md flex flex-col gap-6">
                         <div className="bg-green-50 border border-green-300 rounded-lg p-4">
@@ -389,26 +395,22 @@ export default function Home() {
                         )}
 
                         <div className="flex flex-col gap-2">
-                            <label htmlFor="maxPages" className="font-semibold text-gray-700">
+                            <label htmlFor="maxShops" className="font-semibold text-gray-700">
                                 <span className="bg-green-600 text-white px-2 py-1 rounded mr-2">ステップ2</span>
-                                取得するページ数を選択
+                                取得する件数を選択
                             </label>
                             <input
-                                id="maxPages"
+                                id="maxShops"
                                 type="number"
                                 min="1"
-                                max={searchResult.totalPages}
+                                max={searchResult.totalCount}
                                 className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition text-black"
-                                value={maxPages}
-                                onChange={(e) => setMaxPages(Math.min(Number(e.target.value), searchResult.totalPages))}
+                                value={maxShops}
+                                onChange={(e) => setMaxShops(Math.min(Math.max(1, Number(e.target.value)), searchResult.totalCount))}
                             />
                             <div className="text-xs text-gray-500 space-y-1">
-                                <p>※ 1〜{searchResult.totalPages}ページまで指定可能</p>
-                                <p>※ {maxPages}ページ = {
-                                    maxPages >= searchResult.totalPages
-                                        ? `${searchResult.totalCount.toLocaleString()} 店舗`
-                                        : `約 ${(maxPages * searchResult.shopsOnPage).toLocaleString()} 店舗`
-                                }</p>
+                                <p>※ 1〜{searchResult.totalCount.toLocaleString()}件まで指定可能</p>
+                                <p>※ 処理目安: 約{formatRemainingTime(Math.ceil(maxShops / 250 * 60))}（250件/分）</p>
                             </div>
                         </div>
 
@@ -425,11 +427,7 @@ export default function Home() {
                         >
                             {scraping
                                 ? 'スクレイピング中...'
-                                : `${maxPages}ページ分をスクレイピング開始（${
-                                    maxPages >= searchResult.totalPages
-                                        ? `${searchResult.totalCount.toLocaleString()}店舗`
-                                        : `約${(maxPages * searchResult.shopsOnPage).toLocaleString()}店舗`
-                                }）`
+                                : `${maxShops.toLocaleString()}件をスクレイピング開始`
                             }
                         </button>
 

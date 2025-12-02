@@ -1,20 +1,20 @@
-# 🔥 HotPepper Beauty Scraper
+# HotPepper Beauty Scraper
 
-HotPepper Beautyのサロン情報を検索キーワードから自動収集し、CSV形式でダウンロードできるWebサービスです。
+HotPepper Beautyの美容室・サロン情報を検索キーワードから自動収集し、CSV形式でダウンロードできるWebサービスです。
 
 ![Next.js](https://img.shields.io/badge/Next.js-16.0.6-black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
+![Vercel](https://img.shields.io/badge/Vercel-Hobby対応-blue)
 
-## 📋 機能
+## 機能
 
-- ✅ キーワード検索によるサロン情報の自動収集
-- ✅ 並列処理（10ワーカー）による高速スクレイピング
-- ✅ サロン詳細情報・電話番号の取得
-- ✅ CSV形式での一括エクスポート
-- ✅ レスポンシブ対応のモダンUI
+- キーワード検索（複合キーワード対応：スペース区切り）
+- ページ数選択による取得範囲指定
+- リアルタイム進捗表示（処理中店舗名、残り時間）
+- CSV形式での一括ダウンロード
+- Vercel Hobbyプラン対応（10秒制限回避のチャンク処理）
 
-## 📊 取得データ
+## 取得データ
 
 以下の情報を自動で収集します：
 
@@ -22,35 +22,30 @@ HotPepper Beautyのサロン情報を検索キーワードから自動収集し�
 |--------|------|
 | 店名 | サロン名 |
 | URL | サロンページURL |
-| ページ | 検索結果ページ番号 |
-| telMask | マスク済み電話番号 |
-| address | 住所 |
-| access | アクセス・道案内 |
-| businessHours | 営業時間 |
-| holiday | 定休日 |
-| payment | 支払い方法 |
-| cutPrice | カット価格 |
-| staffCount | スタッフ数 |
-| features | こだわり条件 |
-| remark | 備考 |
-| others | その他 |
-| telReal | 実際の電話番号 |
+| 住所 | 所在地 |
+| アクセス・道案内 | 最寄り駅等 |
+| 営業時間 | 営業時間 |
+| 定休日 | 定休日 |
+| 支払い方法 | 支払い方法 |
+| カット価格 | カット料金 |
+| スタッフ数 | スタッフ数 |
+| こだわり条件 | サロンの特徴 |
+| 備考 | 備考 |
+| その他 | その他情報 |
+| 電話番号 | 実際の電話番号 |
 
-## 🚀 セットアップ
+## セットアップ
 
 ### 必要要件
 
 - Node.js 18.x 以上
-- npm または yarn
+- npm
 
 ### インストール
 
 ```bash
-# リポジトリをクローン
 git clone https://github.com/DaisukeHori/hotpepper_scraper.git
 cd hotpepper_scraper
-
-# 依存関係をインストール
 npm install
 ```
 
@@ -60,33 +55,49 @@ npm install
 npm run dev
 ```
 
-ブラウザで [http://localhost:3000](http://localhost:3000) を開いてください。
+ブラウザで http://localhost:3000 を開いてください。
 
-## 💻 使い方
+## 使い方
 
-1. **キーワード入力**: スクレイピングしたいキーワード（例：「渋谷」「表参道」）を入力
-2. **最大ページ数設定**: 取得するページ数を1〜10の範囲で指定
-3. **ダウンロード**: 「CSVをダウンロード」ボタンをクリック
-4. **完了**: CSV形式のファイルが自動的にダウンロードされます
+### ステップ1: キーワード検索
+1. 検索キーワードを入力（例：「渋谷」「香草カラー 表参道」）
+2. 「検索して総ページ数を確認」ボタンをクリック
+3. 総件数・総ページ数・店舗プレビューが表示される
 
-## 🏗️ プロジェクト構造
+### ステップ2: ページ数選択・スクレイピング
+1. 取得するページ数を選択（1ページ = 約20店舗）
+2. 「スクレイピング開始」ボタンをクリック
+3. リアルタイムで進捗が表示される
+   - 処理完了した店舗名
+   - 現在処理中の店舗名（アニメーション表示）
+   - プログレスバー
+   - 残り時間
+
+### ステップ3: CSVダウンロード
+1. 処理完了後、取得件数と処理時間が表示される
+2. 「CSVをダウンロード」ボタンをクリック
+
+## プロジェクト構造
 
 ```
 hotpepper_scraper/
 ├── src/
 │   └── app/
 │       ├── api/
-│       │   └── scrape/
-│       │       └── route.ts        # スクレイピングAPI
-│       ├── page.tsx                # メインUI
-│       ├── layout.tsx              # ルートレイアウト
-│       └── globals.css             # グローバルスタイル
-├── public/                         # 静的ファイル
+│       │   ├── scrape/
+│       │   │   └── route.ts    # スクレイピングAPI（チャンク処理対応）
+│       │   └── search/
+│       │       └── route.ts    # 検索API（ページ数・件数取得）
+│       ├── page.tsx            # メインUI
+│       ├── layout.tsx          # メタデータ設定
+│       ├── icon.svg            # ファビコン
+│       ├── apple-icon.svg      # Apple Touch Icon
+│       └── globals.css         # グローバルスタイル
 ├── package.json
 └── tsconfig.json
 ```
 
-## 🛠️ 技術スタック
+## 技術スタック
 
 - **Framework**: Next.js 16 (App Router)
 - **Language**: TypeScript
@@ -94,49 +105,80 @@ hotpepper_scraper/
 - **Scraping**: Cheerio
 - **HTTP Client**: Fetch API
 
-## 🔧 API仕様
+## API仕様
 
-### `GET /api/scrape`
+### `GET /api/search`
 
-サロン情報をスクレイピングしてCSVを返します。
+キーワードで検索し、ページ数・件数を取得します。
 
 **クエリパラメータ:**
 - `keyword` (required): 検索キーワード
-- `maxPages` (optional): 最大ページ数（デフォルト: 5、最大: 10）
 
 **レスポンス:**
-- Content-Type: `text/csv; charset=utf-8`
-- ファイル名: `hotpepper_{keyword}.csv`
-
-**例:**
+```json
+{
+  "keyword": "渋谷",
+  "totalPages": 10,
+  "totalCount": 195,
+  "shopsOnPage": 20,
+  "shopsPerPage": 20,
+  "shopsPreview": [{"name": "店舗名", "url": "URL"}, ...]
+}
 ```
-GET /api/scrape?keyword=渋谷&maxPages=3
+
+### `POST /api/scrape`
+
+店舗情報をスクレイピングします（チャンク処理対応）。
+
+**Phase 1: collect**
+```json
+{
+  "keyword": "渋谷",
+  "maxPages": 5,
+  "phase": "collect"
+}
 ```
 
-## ⚡ パフォーマンス
+**Phase 2: process**
+```json
+{
+  "phase": "process",
+  "shops": [...],
+  "startIndex": 0
+}
+```
 
-- **並列処理**: 10ワーカーによる並列スクレイピング
-- **効率的**: ページ単位とサロン単位の2段階並列処理
-- **高速**: Round-robinアルゴリズムによる負荷分散
+## Vercel Hobbyプラン対応
 
-## 📝 ライセンス
+Vercel Hobbyプランの10秒タイムアウト制限に対応するため、以下の実装を行っています：
 
-MIT License
+1. **チャンク処理**: 15店舗ごとにAPIを分割呼び出し
+2. **リレー式処理**: クライアントがチャンクごとにAPIを呼び出し
+3. **3並列処理**: 各チャンク内で3店舗を並列処理
 
-## ⚠️ 注意事項
+これにより、大量の店舗（100件以上）でも問題なく処理できます。
+
+## デプロイ
+
+### Vercel（推奨）
+
+1. GitHubにリポジトリをプッシュ
+2. [Vercel](https://vercel.com) でインポート
+3. 自動デプロイ
+
+または：
+
+```bash
+npm install -g vercel
+vercel --prod
+```
+
+## 注意事項
 
 - このツールはHotPepper Beautyの利用規約を遵守してご使用ください
 - スクレイピングの頻度や量には十分注意してください
 - 商用利用の際は、事前にホットペッパービューティーの許可を得ることを推奨します
 
-## 🤝 コントリビューション
+## ライセンス
 
-プルリクエストやIssueの投稿を歓迎します！
-
-## 📧 お問い合わせ
-
-質問や提案がある場合は、Issueをオープンしてください。
-
----
-
-Made with ❤️ by [DaisukeHori](https://github.com/DaisukeHori)
+MIT License

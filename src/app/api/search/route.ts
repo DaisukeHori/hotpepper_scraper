@@ -64,9 +64,9 @@ function parseShopsFromListPage(html: string): ShopPreview[] {
     $(".slnCassetteList > li").each((i, el) => {
         const $row = $(el);
 
-        // 店名を取得
+        // 店名を取得（aタグのテキストのみ、spanのUPなどは除外）
         const $slnName = $row.find(".slnName");
-        let name = $slnName.text().trim();
+        let name = $slnName.find("a").first().text().trim();
 
         // URLを取得
         const $slnImgList = $row.find(".slnImgList");

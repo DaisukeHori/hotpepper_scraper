@@ -44,8 +44,13 @@ async function runInWorkers<T, R>(
     buckets.map(async (bucket) => {
       const out: R[] = [];
       for (const item of bucket) {
-        const r = await workerFn(item);
-        out.push(r);
+        try {
+          const r = await workerFn(item);
+          out.push(r);
+        } catch (e) {
+          console.error("Worker item error:", e);
+          // エラーが発生してもスキップせずに次のアイテムを処理
+        }
       }
       return out;
     })
@@ -117,9 +122,9 @@ function parseShopsFromListPage(html: string): ShopBase[] {
   rows.each((i, el) => {
     const $row = $(el);
 
-    // 店名を取得
+    // 店名を取得（aタグのテキストのみ、spanのUPなどは除外）
     const $slnName = $row.find(".slnName");
-    let name = $slnName.text().trim();
+    let name = $slnName.find("a").first().text().trim();
 
     // URLを取得
     // PowerQuery: .slnImgList > :nth-child(1) > A:nth-child(1):nth-last-child(1)
@@ -262,19 +267,25 @@ function parseShopTel(html: string): { telReal?: string } {
 // --- Aggregation: Fetch Shop Full ---
 
 async function fetchShopFull(shop: ShopBase): Promise<ShopFull> {
-  const [detailHtml, telHtml] = await Promise.all([
-    fetch(shop.url).then(r => r.text()).catch(() => ""),
-    fetch(shop.url + "/tel/").then(r => r.text()).catch(() => "")
-  ]);
+  try {
+    const [detailHtml, telHtml] = await Promise.all([
+      fetch(shop.url).then(r => r.text()).catch(() => ""),
+      fetch(shop.url + "/tel/").then(r => r.text()).catch(() => "")
+    ]);
 
-  const detail = parseShopDetail(detailHtml);
-  const tel = parseShopTel(telHtml);
+    const detail = parseShopDetail(detailHtml);
+    const tel = parseShopTel(telHtml);
 
-  return {
-    ...shop,
-    ...detail,
-    telReal: tel.telReal
-  };
+    return {
+      ...shop,
+      ...detail,
+      telReal: tel.telReal
+    };
+  } catch (e) {
+    console.error(`Error fetching shop details for ${shop.url}:`, e);
+    // エラー時は基本情報のみ返す
+    return { ...shop };
+  }
 }
 
 // --- CSV Generation ---
@@ -342,14 +353,21 @@ export async function GET(req: Request) {
       pageNumbers,
       10,
       async (page) => {
-        const html = page === 1 ? firstPage : await fetchListPage(keyword, page);
-        const shops = parseShopsFromListPage(html)
-          .map(s => ({ ...s, page }));
-        return shops;
+        try {
+          const html = page === 1 ? firstPage : await fetchListPage(keyword, page);
+          const shops = parseShopsFromListPage(html)
+            .map(s => ({ ...s, page }));
+          console.log(`Page ${page}: found ${shops.length} shops`);
+          return shops;
+        } catch (e) {
+          console.error(`Error fetching page ${page}:`, e);
+          return []; // エラー時は空配列を返す
+        }
       }
     );
 
     const allShops = allShopsNested.flat();
+    console.log(`Total shops to process: ${allShops.length}`);
 
     // 3. Fetch shop details in parallel
     const fullShops = await runInWorkers(allShops, 10, fetchShopFull);

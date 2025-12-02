@@ -1,14 +1,39 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 
 interface SearchResult {
     keyword: string;
     totalPages: number;
-    totalCount: number; // 正確な件数
+    totalCount: number;
     shopsOnPage: number;
     shopsPerPage: number;
     shopsPreview: { name: string; url: string }[];
+}
+
+interface ProgressState {
+    phase: 'pages' | 'details' | 'idle';
+    current: number;
+    total: number;
+    shopName?: string;
+    elapsedMs: number;
+}
+
+function formatTime(ms: number): string {
+    const seconds = Math.floor(ms / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    if (minutes > 0) {
+        return `${minutes}分${secs}秒`;
+    }
+    return `${secs}秒`;
+}
+
+function estimateRemaining(current: number, total: number, elapsedMs: number): string {
+    if (current === 0) return '計算中...';
+    const msPerItem = elapsedMs / current;
+    const remaining = (total - current) * msPerItem;
+    return formatTime(remaining);
 }
 
 export default function Home() {
@@ -18,9 +43,10 @@ export default function Home() {
     const [maxPages, setMaxPages] = useState(5);
     const [csvData, setCsvData] = useState('');
     const [scraping, setScraping] = useState(false);
-    const [progress, setProgress] = useState('');
+    const [progress, setProgress] = useState<ProgressState>({ phase: 'idle', current: 0, total: 0, elapsedMs: 0 });
+    const isComposingRef = useRef(false);
 
-    // ステップ1: キーワード検索して総ページ数と店舗数を取得
+    // ステップ1: キーワード検索
     async function handleSearch() {
         if (!keyword) {
             alert('キーワードを入力してください');
@@ -30,7 +56,7 @@ export default function Home() {
         setLoading(true);
         setSearchResult(null);
         setCsvData('');
-        setProgress('');
+        setProgress({ phase: 'idle', current: 0, total: 0, elapsedMs: 0 });
 
         try {
             const res = await fetch(`/api/search?keyword=${encodeURIComponent(keyword)}`);
@@ -43,7 +69,7 @@ export default function Home() {
 
             const data: SearchResult = await res.json();
             setSearchResult(data);
-            setMaxPages(Math.min(data.totalPages, 5)); // デフォルトは5ページ
+            setMaxPages(Math.min(data.totalPages, 5));
         } catch (error) {
             console.error('検索エラー:', error);
             alert('検索中にエラーが発生しました: ' + error);
@@ -52,39 +78,84 @@ export default function Home() {
         }
     }
 
-    // ステップ2: 実際のスクレイピングを実行
+    // IME対応のキーダウンハンドラ
+    function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+        // IME変換中はEnterを無視
+        if (e.key === 'Enter' && !isComposingRef.current) {
+            handleSearch();
+        }
+    }
+
+    // ステップ2: SSEでスクレイピング実行
     async function handleScrape() {
         if (!searchResult) return;
 
         setScraping(true);
         setCsvData('');
-        setProgress('データ取得中...');
+        setProgress({ phase: 'pages', current: 0, total: maxPages, elapsedMs: 0 });
 
         try {
-            // 進捗表示の更新
-            const estimatedShops = maxPages * searchResult.shopsOnPage;
-            const estimatedTime = Math.ceil(estimatedShops * 0.3); // 約0.3秒/店舗
-            setProgress(`データ取得中... (約${estimatedShops}店舗、推定${estimatedTime}秒)`);
-
             const res = await fetch(`/api/scrape?keyword=${encodeURIComponent(keyword)}&maxPages=${maxPages}`);
 
             if (!res.ok) {
                 const errorText = await res.text();
                 alert("エラー：" + errorText);
                 setScraping(false);
-                setProgress('');
                 return;
             }
 
-            // CSVテキストを取得
-            const csvText = await res.text();
-            setCsvData(csvText);
-            setProgress('完了！下のボタンからダウンロードしてください。');
+            const reader = res.body?.getReader();
+            if (!reader) {
+                throw new Error('Stream not available');
+            }
+
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // SSEイベントをパース
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        try {
+                            const event = JSON.parse(line.slice(6));
+
+                            if (event.type === 'progress') {
+                                setProgress({
+                                    phase: event.phase,
+                                    current: event.current,
+                                    total: event.total,
+                                    shopName: event.shopName,
+                                    elapsedMs: event.elapsedMs
+                                });
+                            } else if (event.type === 'complete') {
+                                setCsvData(event.csv);
+                                setProgress({
+                                    phase: 'idle',
+                                    current: event.totalShops,
+                                    total: event.totalShops,
+                                    elapsedMs: event.elapsedMs
+                                });
+                            } else if (event.type === 'error') {
+                                alert('エラー: ' + event.message);
+                            }
+                        } catch (e) {
+                            console.error('Failed to parse SSE event:', e);
+                        }
+                    }
+                }
+            }
 
         } catch (error) {
             console.error('スクレイピングエラー:', error);
             alert('スクレイピング中にエラーが発生しました: ' + error);
-            setProgress('');
         } finally {
             setScraping(false);
         }
@@ -94,16 +165,13 @@ export default function Home() {
     const handleDownload = useCallback(() => {
         if (!csvData) return;
 
-        // ファイル名をサニタイズ
         const sanitizedKeyword = keyword.replace(/[^a-zA-Z0-9ぁ-んァ-ヶ一-龯]/g, '_');
         const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
         const filename = `hotpepper_${sanitizedKeyword}_${timestamp}.csv`;
 
-        // BOM付きUTF-8でBlobを作成（Excel対応）
         const bom = '\uFEFF';
         const blob = new Blob([bom + csvData], { type: 'text/csv;charset=utf-8;' });
 
-        // ダウンロードリンクを作成
         const url = window.URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -113,7 +181,6 @@ export default function Home() {
         document.body.appendChild(link);
         link.click();
 
-        // クリーンアップ
         setTimeout(() => {
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
@@ -122,6 +189,9 @@ export default function Home() {
 
     // CSVの行数を取得
     const csvRowCount = csvData ? csvData.split('\n').length - 1 : 0;
+
+    // 進捗バーの計算
+    const progressPercent = progress.total > 0 ? (progress.current / progress.total) * 100 : 0;
 
     return (
         <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-gray-50">
@@ -142,7 +212,9 @@ export default function Home() {
                             placeholder="例: 渋谷、香草カラー、良草 パーマ"
                             value={keyword}
                             onChange={(e) => setKeyword(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                            onKeyDown={handleKeyDown}
+                            onCompositionStart={() => { isComposingRef.current = true; }}
+                            onCompositionEnd={() => { isComposingRef.current = false; }}
                         />
                         <p className="text-xs text-gray-500">※ スペース区切りで複合検索可能</p>
                     </div>
@@ -233,15 +305,36 @@ export default function Home() {
                             }
                         </button>
 
-                        {/* 進捗表示 */}
-                        {progress && (
-                            <div className={`p-3 rounded-lg text-center ${csvData ? 'bg-blue-50 text-blue-700' : 'bg-yellow-50 text-yellow-700'}`}>
-                                {scraping && (
-                                    <div className="flex items-center justify-center gap-2 mb-2">
-                                        <div className="animate-spin h-5 w-5 border-2 border-yellow-500 border-t-transparent rounded-full"></div>
+                        {/* リアルタイム進捗表示 */}
+                        {scraping && progress.phase !== 'idle' && (
+                            <div className="bg-yellow-50 border border-yellow-300 rounded-lg p-4 space-y-3">
+                                <div className="flex justify-between items-center text-sm text-yellow-800">
+                                    <span className="font-semibold">
+                                        {progress.phase === 'pages' ? 'ページ取得中' : '店舗詳細取得中'}
+                                    </span>
+                                    <span>
+                                        {progress.current} / {progress.total}
+                                    </span>
+                                </div>
+
+                                {/* プログレスバー */}
+                                <div className="w-full bg-yellow-200 rounded-full h-4 overflow-hidden">
+                                    <div
+                                        className="bg-yellow-500 h-4 rounded-full transition-all duration-300"
+                                        style={{ width: `${progressPercent}%` }}
+                                    />
+                                </div>
+
+                                <div className="flex justify-between text-xs text-yellow-700">
+                                    <span>経過: {formatTime(progress.elapsedMs)}</span>
+                                    <span>残り: 約{estimateRemaining(progress.current, progress.total, progress.elapsedMs)}</span>
+                                </div>
+
+                                {progress.shopName && (
+                                    <div className="text-xs text-yellow-700 truncate">
+                                        処理中: {progress.shopName}
                                     </div>
                                 )}
-                                {progress}
                             </div>
                         )}
                     </div>
@@ -255,9 +348,10 @@ export default function Home() {
                                 <span className="bg-blue-600 text-white px-2 py-1 rounded mr-2">ステップ3</span>
                                 データ取得完了
                             </p>
-                            <p className="text-blue-700">
-                                {csvRowCount}件のデータを取得しました
-                            </p>
+                            <div className="text-blue-700 space-y-1">
+                                <p><strong>{csvRowCount}件</strong>のデータを取得しました</p>
+                                <p className="text-sm">処理時間: {formatTime(progress.elapsedMs)}</p>
+                            </div>
                         </div>
 
                         <button

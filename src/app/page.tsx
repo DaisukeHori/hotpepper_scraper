@@ -94,19 +94,6 @@ function generateNiceNumbers(total: number): number[] {
     return values;
 }
 
-// スナップ機能：近いキリの良い数値に吸い付く
-function snapToNiceNumber(value: number, niceNumbers: number[], total: number): number {
-    // スナップ閾値（総数の2%または5の小さい方）
-    const threshold = Math.min(Math.ceil(total * 0.02), 5);
-
-    for (const nice of niceNumbers) {
-        if (Math.abs(value - nice) <= threshold) {
-            return nice;
-        }
-    }
-    return value;
-}
-
 function shopsToCsv(rows: ShopFull[]): string {
     const headers = [
         "店名", "URL",
@@ -439,20 +426,10 @@ export default function Home() {
                                                 type="range"
                                                 min="1"
                                                 max={searchResult.totalCount}
-                                                list="shopTicks"
                                                 className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
                                                 value={maxShops}
-                                                onChange={(e) => {
-                                                    const rawValue = Number(e.target.value);
-                                                    const snappedValue = snapToNiceNumber(rawValue, niceNumbers, searchResult.totalCount);
-                                                    setMaxShops(snappedValue);
-                                                }}
+                                                onChange={(e) => setMaxShops(Number(e.target.value))}
                                             />
-                                            <datalist id="shopTicks">
-                                                {niceNumbers.map(n => (
-                                                    <option key={n} value={n} />
-                                                ))}
-                                            </datalist>
                                             <input
                                                 id="maxShops"
                                                 type="number"
@@ -496,8 +473,8 @@ export default function Home() {
                                     </>
                                 );
                             })()}
-                            <div className="text-xs text-gray-500 space-y-1">
-                                <p>※ 処理目安: {formatRemainingTime(Math.ceil(maxShops / 250 * 60))}（250件/分）</p>
+                            <div className="text-xs text-gray-500">
+                                <p>※ 処理目安: {formatRemainingTime(Math.ceil(maxShops / 250 * 60))}</p>
                             </div>
                         </div>
 

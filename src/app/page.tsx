@@ -369,14 +369,9 @@ export default function Home() {
                             <p className="text-green-800 font-semibold mb-2">
                                 検索結果: 「{searchResult.keyword}」
                             </p>
-                            <div className="grid grid-cols-2 gap-2 text-sm text-green-700">
-                                <div>総件数:</div>
-                                <div className="font-bold text-xl">{searchResult.totalCount.toLocaleString()} 件</div>
-                                <div>総ページ数:</div>
-                                <div className="font-bold">{searchResult.totalPages} ページ</div>
-                                <div>1ページあたり:</div>
-                                <div className="font-bold">{searchResult.shopsOnPage} 店舗</div>
-                            </div>
+                            <p className="text-green-700">
+                                総サロン数: <span className="font-bold text-xl">{searchResult.totalCount.toLocaleString()} 件</span>
+                            </p>
                         </div>
 
                         {searchResult.shopsPreview && searchResult.shopsPreview.length > 0 && (

@@ -30,9 +30,9 @@ function parsePageInfo(html: string): { totalPages: number; totalCount: number; 
         if (!isNaN(num)) totalPages = num;
     }
 
-    // 1ページ目の店舗数をカウント（PowerQueryと同じセレクタ）
-    const shops = $(".slnCassetteList > li");
-    const shopsOnPage = shops.length;
+    // 1ページ目の店舗数をカウント（有効な店舗のみ）
+    const shopsPreview = parseShopsFromListPage(html);
+    const shopsOnPage = shopsPreview.length;
 
     // 推定総店舗数
     const totalCount = shopsOnPage * totalPages;
@@ -43,7 +43,8 @@ function parsePageInfo(html: string): { totalPages: number; totalCount: number; 
 // --- Parse: Shop List from Page ---
 // PowerQuery: RowSelector = ".slnCassetteList > LI"
 //             店名 = ".slnName"
-//             URL = ".slnImgList > :nth-child(1) > A:nth-child(1)" の href属性
+//             URL = ".slnImgList > :nth-child(1) > A:nth-child(1):nth-last-child(1)" の href属性
+// PowerQuery: URLからクエリ文字列を落とす → Splitter.SplitTextByDelimiter("/?", ...)
 
 interface ShopPreview {
     name: string;
@@ -58,36 +59,61 @@ function parseShopsFromListPage(html: string): ShopPreview[] {
     $(".slnCassetteList > li").each((i, el) => {
         const $row = $(el);
 
-        // 店名を取得
-        const name = $row.find(".slnName").text().trim();
+        // 店名を取得（.slnNameの直接のテキストのみ）
+        const $slnName = $row.find(".slnName");
+        // 子要素のテキストを除外して、直接のテキストのみを取得
+        let name = $slnName.clone().children().remove().end().text().trim();
 
-        // URLを取得（.slnImgList の最初の子要素の最初のaタグ）
-        let href = $row
-            .find(".slnImgList")
-            .children()
-            .first()
-            .find("a")
-            .first()
-            .attr("href");
+        // slnNameが空の場合、全テキストを取得
+        if (!name) {
+            name = $slnName.text().trim();
+        }
+
+        // URLを取得
+        // PowerQuery: .slnImgList > :nth-child(1) > A:nth-child(1):nth-last-child(1)
+        const $slnImgList = $row.find(".slnImgList");
+        const $firstChild = $slnImgList.children().first();
+        const $anchors = $firstChild.find("a");
+
+        // 最初のaタグで、かつそれが唯一のaタグである場合のhrefを取得
+        let href: string | undefined;
+        if ($anchors.length === 1) {
+            href = $anchors.first().attr("href");
+        } else if ($anchors.length > 0) {
+            // 最初のaタグを使用
+            href = $anchors.first().attr("href");
+        }
 
         if (!href) {
             // バックアップ: slnH を含む任意のリンク
-            href = $row.find("a[href*='slnH']").first().attr("href");
+            href = $row.find("a[href*='/slnH']").first().attr("href");
         }
 
         if (!href) return;
 
-        // クエリパラメータを削除
-        let url = href.split("?")[0];
+        // PowerQuery: "/?", で分割してクエリパラメータを削除
+        let url = href.split("/?")[0];
+
+        // さらに ? がある場合も削除
+        url = url.split("?")[0];
+
+        // 末尾のスラッシュを削除
+        url = url.replace(/\/$/, "");
 
         // 絶対URL化
         if (!url.startsWith("http")) {
             url = "https://beauty.hotpepper.jp" + url;
         }
 
-        if (name && url) {
-            shops.push({ name, url });
+        // URLが正しい形式（/slnH[数字]）かどうかを確認
+        if (!url.match(/\/slnH\d+$/)) {
+            return;
         }
+
+        // 店名が空の場合はスキップ
+        if (!name) return;
+
+        shops.push({ name, url });
     });
 
     return shops;
@@ -106,10 +132,8 @@ export async function GET(req: Request) {
     try {
         // 1ページ目を取得して総ページ数と店舗数を確認
         const firstPage = await fetchListPage(keyword, 1);
-        const { totalPages, totalCount, shopsOnPage } = parsePageInfo(firstPage);
-
-        // 1ページ目の店舗一覧も取得
         const shopsPreview = parseShopsFromListPage(firstPage);
+        const { totalPages, totalCount, shopsOnPage } = parsePageInfo(firstPage);
 
         return NextResponse.json({
             keyword,

@@ -83,7 +83,8 @@ function parseMaxPages(html: string): number {
 // --- Parse: Shop List ---
 // PowerQuery: RowSelector = ".slnCassetteList > LI"
 //             店名 = ".slnName"
-//             URL = ".slnImgList > :nth-child(1) > A:nth-child(1)" の href属性
+//             URL = ".slnImgList > :nth-child(1) > A:nth-child(1):nth-last-child(1)" の href属性
+// PowerQuery: URLからクエリ文字列を落とす → Splitter.SplitTextByDelimiter("/?", ...)
 
 function parseShopsFromListPage(html: string): ShopBase[] {
   const $ = cheerio.load(html);
@@ -94,32 +95,59 @@ function parseShopsFromListPage(html: string): ShopBase[] {
   rows.each((i, el) => {
     const $row = $(el);
 
-    // 店名を取得
-    const name = $row.find(".slnName").text().trim();
+    // 店名を取得（.slnNameの直接のテキストのみ）
+    const $slnName = $row.find(".slnName");
+    // 子要素のテキストを除外して、直接のテキストのみを取得
+    let name = $slnName.clone().children().remove().end().text().trim();
 
-    // URLを取得（.slnImgList の最初の子要素の最初のaタグ）
-    let href = $row
-      .find(".slnImgList")
-      .children()
-      .first()
-      .find("a")
-      .first()
-      .attr("href");
+    // slnNameが空の場合、全テキストを取得
+    if (!name) {
+      name = $slnName.text().trim();
+    }
+
+    // URLを取得
+    // PowerQuery: .slnImgList > :nth-child(1) > A:nth-child(1):nth-last-child(1)
+    const $slnImgList = $row.find(".slnImgList");
+    const $firstChild = $slnImgList.children().first();
+    const $anchors = $firstChild.find("a");
+
+    // 最初のaタグで、かつそれが唯一のaタグである場合のhrefを取得
+    let href: string | undefined;
+    if ($anchors.length === 1) {
+      href = $anchors.first().attr("href");
+    } else if ($anchors.length > 0) {
+      // 最初のaタグを使用
+      href = $anchors.first().attr("href");
+    }
 
     if (!href) {
       // バックアップ: slnH を含む任意のリンク
-      href = $row.find("a[href*='slnH']").first().attr("href");
+      href = $row.find("a[href*='/slnH']").first().attr("href");
     }
 
     if (!href) return;
 
-    // クエリパラメータを削除
-    let url = href.split("?")[0];
+    // PowerQuery: "/?", で分割してクエリパラメータを削除
+    let url = href.split("/?")[0];
+
+    // さらに ? がある場合も削除
+    url = url.split("?")[0];
+
+    // 末尾のスラッシュを削除
+    url = url.replace(/\/$/, "");
 
     // 絶対URL化
     if (!url.startsWith("http")) {
       url = "https://beauty.hotpepper.jp" + url;
     }
+
+    // URLが正しい形式（/slnH[数字]）かどうかを確認
+    if (!url.match(/\/slnH\d+$/)) {
+      return;
+    }
+
+    // 店名が空の場合はスキップ
+    if (!name) return;
 
     shops.push({ name, url, page: 0 });
   });
@@ -129,7 +157,8 @@ function parseShopsFromListPage(html: string): ShopBase[] {
 
 // --- Fetch + Parse: Detail Page ---
 // PowerQuery: RowSelector = "TABLE.slnDataTbl.bdCell.bgThNml.fgThNml.vaThT.pCellV10H12.mT20 > * > TR"
-//             Column1 = TH, Column2 = TD
+//             Column1 = TH (nth-child(1):nth-last-child(2) or nth-child(1):nth-last-child(4))
+//             Column2 = TD
 
 function parseShopDetail(html: string): ShopDetail {
   const $ = cheerio.load(html);
@@ -142,47 +171,63 @@ function parseShopDetail(html: string): ShopDetail {
 
   rows.each((i, el) => {
     const $row = $(el);
-    const th = $row.find("th").first().text().trim();
-    const td = $row.find("td").first().text().trim();
+    const $ths = $row.find("th");
+    const $tds = $row.find("td");
 
-    switch (th) {
-      case "電話番号":
-        out.telMask = td;
-        break;
-      case "住所":
-        out.address = td;
-        break;
-      case "アクセス・道案内":
-        out.access = td;
-        break;
-      case "営業時間":
-        out.businessHours = td;
-        break;
-      case "定休日":
-        out.holiday = td;
-        break;
-      case "支払い方法":
-        out.payment = td;
-        break;
-      case "カット価格":
-        out.cutPrice = td;
-        break;
-      case "スタッフ数":
-        out.staffCount = td;
-        break;
-      case "こだわり条件":
-        out.features = td;
-        break;
-      case "備考":
-        out.remark = td;
-        break;
-      case "その他":
-        out.others = td;
-        break;
+    // 最初のTH/TDペアを処理
+    if ($ths.length > 0 && $tds.length > 0) {
+      const th1 = $ths.eq(0).text().trim();
+      const td1 = $tds.eq(0).text().trim();
+      assignDetail(out, th1, td1);
+
+      // 2番目のTH/TDペアがある場合も処理（1行に2つの項目がある場合）
+      if ($ths.length >= 2 && $tds.length >= 2) {
+        const th2 = $ths.eq(1).text().trim();
+        const td2 = $tds.eq(1).text().trim();
+        assignDetail(out, th2, td2);
+      }
     }
   });
 
   return out;
+}
+
+function assignDetail(out: ShopDetail, th: string, td: string) {
+  switch (th) {
+    case "電話番号":
+      out.telMask = td;
+      break;
+    case "住所":
+      out.address = td;
+      break;
+    case "アクセス・道案内":
+      out.access = td;
+      break;
+    case "営業時間":
+      out.businessHours = td;
+      break;
+    case "定休日":
+      out.holiday = td;
+      break;
+    case "支払い方法":
+      out.payment = td;
+      break;
+    case "カット価格":
+      out.cutPrice = td;
+      break;
+    case "スタッフ数":
+      out.staffCount = td;
+      break;
+    case "こだわり条件":
+      out.features = td;
+      break;
+    case "備考":
+      out.remark = td;
+      break;
+    case "その他":
+      out.others = td;
+      break;
+  }
 }
 
 // --- Fetch + Parse: Tel Page ---
@@ -245,7 +290,7 @@ async function fetchShopFull(shop: ShopBase): Promise<ShopFull> {
   // 詳細ページと電話番号ページを並列で取得
   const [detailHtml, telHtml] = await Promise.all([
     fetch(shop.url).then(r => r.text()).catch(() => ""),
-    fetch(shop.url.replace(/\/$/, "") + "/tel/").then(r => r.text()).catch(() => "")
+    fetch(shop.url + "/tel/").then(r => r.text()).catch(() => "")
   ]);
 
   const detail = parseShopDetail(detailHtml);

@@ -394,15 +394,26 @@ export default function Home() {
                                 <span className="bg-green-600 text-white px-2 py-1 rounded mr-2">ステップ2</span>
                                 取得する件数を選択
                             </label>
-                            <input
-                                id="maxShops"
-                                type="number"
-                                min="1"
-                                max={searchResult.totalCount}
-                                className="p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition text-black"
-                                value={maxShops}
-                                onChange={(e) => setMaxShops(Math.min(Math.max(1, Number(e.target.value)), searchResult.totalCount))}
-                            />
+                            <div className="flex items-center gap-3">
+                                <input
+                                    id="maxShopsSlider"
+                                    type="range"
+                                    min="1"
+                                    max={searchResult.totalCount}
+                                    className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
+                                    value={maxShops}
+                                    onChange={(e) => setMaxShops(Number(e.target.value))}
+                                />
+                                <input
+                                    id="maxShops"
+                                    type="number"
+                                    min="1"
+                                    max={searchResult.totalCount}
+                                    className="w-24 p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent outline-none transition text-black text-center"
+                                    value={maxShops}
+                                    onChange={(e) => setMaxShops(Math.min(Math.max(1, Number(e.target.value)), searchResult.totalCount))}
+                                />
+                            </div>
                             <div className="text-xs text-gray-500 space-y-1">
                                 <p>※ 1〜{searchResult.totalCount.toLocaleString()}件まで指定可能</p>
                                 <p>※ 処理目安: {formatRemainingTime(Math.ceil(maxShops / 250 * 60))}（250件/分）</p>

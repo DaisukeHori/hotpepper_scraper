@@ -94,6 +94,19 @@ function generateNiceNumbers(total: number): number[] {
     return values;
 }
 
+// スナップ機能：近いキリの良い数値に吸い付く
+function snapToNiceNumber(value: number, niceNumbers: number[], total: number): number {
+    // スナップ閾値（総数の3%または8の小さい方）
+    const threshold = Math.min(Math.ceil(total * 0.03), 8);
+
+    for (const nice of niceNumbers) {
+        if (Math.abs(value - nice) <= threshold) {
+            return nice;
+        }
+    }
+    return value;
+}
+
 function shopsToCsv(rows: ShopFull[]): string {
     const headers = [
         "店名", "URL",
@@ -428,7 +441,11 @@ export default function Home() {
                                                 max={searchResult.totalCount}
                                                 className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
                                                 value={maxShops}
-                                                onChange={(e) => setMaxShops(Number(e.target.value))}
+                                                onChange={(e) => {
+                                                    const raw = Number(e.target.value);
+                                                    const snapped = snapToNiceNumber(raw, niceNumbers, searchResult.totalCount);
+                                                    setMaxShops(snapped);
+                                                }}
                                             />
                                             <input
                                                 id="maxShops"

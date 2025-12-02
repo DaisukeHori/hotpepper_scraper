@@ -26,37 +26,33 @@ interface ShopFull extends ShopBase, ShopDetail {
   telReal?: string;
 }
 
-// --- Utility: Parallel Workers ---
+// --- Utility: Sleep ---
 
-async function runInWorkers<T, R>(
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// --- Utility: Sequential Processing with Delay ---
+
+async function processSequentially<T, R>(
   items: T[],
-  workerCount: number,
-  workerFn: (item: T) => Promise<R>
+  processFn: (item: T, index: number) => Promise<R>,
+  delayMs: number = 100
 ): Promise<R[]> {
-  const n = Math.min(workerCount, items.length || 1);
-  const buckets: T[][] = Array.from({ length: n }, () => []);
-
-  items.forEach((item, index) => {
-    buckets[index % n].push(item);
-  });
-
-  const results = await Promise.all(
-    buckets.map(async (bucket) => {
-      const out: R[] = [];
-      for (const item of bucket) {
-        try {
-          const r = await workerFn(item);
-          out.push(r);
-        } catch (e) {
-          console.error("Worker item error:", e);
-          // エラーが発生してもスキップせずに次のアイテムを処理
-        }
-      }
-      return out;
-    })
-  );
-
-  return results.flat();
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i++) {
+    try {
+      const r = await processFn(items[i], i);
+      results.push(r);
+    } catch (e) {
+      console.error(`Error processing item ${i}:`, e);
+    }
+    // 最後のアイテム以外は遅延を入れる
+    if (i < items.length - 1 && delayMs > 0) {
+      await sleep(delayMs);
+    }
+  }
+  return results;
 }
 
 // --- Fetch: List Page ---
@@ -346,12 +342,11 @@ export async function GET(req: Request) {
     const totalPages = parseMaxPages(firstPage);
     const maxPages = Math.min(totalPages, maxPagesParam);
 
-    // 2. Fetch all list pages in parallel
+    // 2. Fetch all list pages sequentially with delay
     const pageNumbers = Array.from({ length: maxPages }, (_, i) => i + 1);
 
-    const allShopsNested = await runInWorkers(
+    const allShopsNested = await processSequentially(
       pageNumbers,
-      10,
       async (page) => {
         try {
           const html = page === 1 ? firstPage : await fetchListPage(keyword, page);
@@ -361,16 +356,24 @@ export async function GET(req: Request) {
           return shops;
         } catch (e) {
           console.error(`Error fetching page ${page}:`, e);
-          return []; // エラー時は空配列を返す
+          return [] as ShopBase[];
         }
-      }
+      },
+      200 // 200ms delay between page fetches
     );
 
     const allShops = allShopsNested.flat();
     console.log(`Total shops to process: ${allShops.length}`);
 
-    // 3. Fetch shop details in parallel
-    const fullShops = await runInWorkers(allShops, 10, fetchShopFull);
+    // 3. Fetch shop details sequentially with delay
+    const fullShops = await processSequentially(
+      allShops,
+      async (shop, index) => {
+        console.log(`Fetching details ${index + 1}/${allShops.length}: ${shop.name}`);
+        return fetchShopFull(shop);
+      },
+      150 // 150ms delay between shop detail fetches
+    );
 
     // 4. Generate CSV
     const csv = shopsToCsv(fullShops);

@@ -485,29 +485,6 @@ export default function Home() {
                     </div>
                 )}
 
-                <div className="text-gray-500 text-xs mt-4 text-center">
-                    ※ Vercel Hobby対応：チャンク処理で10秒制限を回避
-                </div>
-
-                {csvData && (
-                    <div className="bg-white p-4 rounded-xl shadow-lg w-full max-w-4xl mt-8">
-                        <h2 className="text-xl font-bold text-gray-800 mb-4">CSVプレビュー ({progress.processedCount ?? progress.current}件)</h2>
-                        <textarea
-                            className="w-full h-96 p-3 border border-gray-300 rounded-lg font-mono text-xs text-black"
-                            value={csvData}
-                            readOnly
-                        />
-                        <button
-                            onClick={() => {
-                                navigator.clipboard.writeText(csvData);
-                                alert('CSVをクリップボードにコピーしました');
-                            }}
-                            className="mt-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                        >
-                            クリップボードにコピー
-                        </button>
-                    </div>
-                )}
             </div>
         </main>
     );

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <!-- 背景 -->
+  <rect width="32" height="32" rx="6" fill="#FF6B35"/>
+  <!-- ハサミ -->
+  <g stroke="#FFF" stroke-width="2" stroke-linecap="round">
+    <!-- 左の刃 -->
+    <ellipse cx="10" cy="10" rx="4" ry="6" transform="rotate(-30 10 10)" fill="none"/>
+    <line x1="12" y1="14" x2="20" y2="22"/>
+    <!-- 右の刃 -->
+    <ellipse cx="22" cy="10" rx="4" ry="6" transform="rotate(30 22 10)" fill="none"/>
+    <line x1="20" y1="14" x2="12" y2="22"/>
+    <!-- 中心の留め具 -->
+    <circle cx="16" cy="18" r="2" fill="#FFF"/>
+  </g>
+</svg>

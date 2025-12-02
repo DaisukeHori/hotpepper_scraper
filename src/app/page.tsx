@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import Link from 'next/link';
 
 interface SearchResult {
     keyword: string;
@@ -96,8 +97,8 @@ function generateNiceNumbers(total: number): number[] {
 
 // スナップ機能：近いキリの良い数値に吸い付く
 function snapToNiceNumber(value: number, niceNumbers: number[], total: number): number {
-    // スナップ閾値（総数の2%または5の小さい方）
-    const threshold = Math.min(Math.ceil(total * 0.02), 5);
+    // スナップ閾値（総数の3%または8の小さい方）
+    const threshold = Math.min(Math.ceil(total * 0.03), 8);
 
     for (const nice of niceNumbers) {
         if (Math.abs(value - nice) <= threshold) {
@@ -359,7 +360,15 @@ export default function Home() {
     return (
         <main className="flex min-h-screen flex-col items-center justify-center p-24 bg-gray-50">
             <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex flex-col gap-8">
-                <h1 className="text-4xl font-bold text-gray-800 mb-8">HotPepper Beauty Scraper</h1>
+                <div className="text-center mb-8">
+                    <h1 className="text-4xl font-bold text-gray-800">HotPepper Beauty Scraper</h1>
+                    <Link
+                        href="/help"
+                        className="text-blue-600 hover:text-blue-800 text-sm mt-2 inline-block"
+                    >
+                        使い方ガイド →
+                    </Link>
+                </div>
 
                 {/* ステップ1: キーワード検索 */}
                 <div className="bg-white p-8 rounded-xl shadow-lg w-full max-w-md flex flex-col gap-6">
@@ -439,20 +448,14 @@ export default function Home() {
                                                 type="range"
                                                 min="1"
                                                 max={searchResult.totalCount}
-                                                list="shopTicks"
                                                 className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-green-600"
                                                 value={maxShops}
                                                 onChange={(e) => {
-                                                    const rawValue = Number(e.target.value);
-                                                    const snappedValue = snapToNiceNumber(rawValue, niceNumbers, searchResult.totalCount);
-                                                    setMaxShops(snappedValue);
+                                                    const raw = Number(e.target.value);
+                                                    const snapped = snapToNiceNumber(raw, niceNumbers, searchResult.totalCount);
+                                                    setMaxShops(snapped);
                                                 }}
                                             />
-                                            <datalist id="shopTicks">
-                                                {niceNumbers.map(n => (
-                                                    <option key={n} value={n} />
-                                                ))}
-                                            </datalist>
                                             <input
                                                 id="maxShops"
                                                 type="number"
@@ -496,8 +499,8 @@ export default function Home() {
                                     </>
                                 );
                             })()}
-                            <div className="text-xs text-gray-500 space-y-1">
-                                <p>※ 処理目安: {formatRemainingTime(Math.ceil(maxShops / 250 * 60))}（250件/分）</p>
+                            <div className="text-xs text-gray-500">
+                                <p>※ 処理目安: {formatRemainingTime(Math.ceil(maxShops / 250 * 60))}</p>
                             </div>
                         </div>
 
